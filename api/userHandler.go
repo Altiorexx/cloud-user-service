@@ -1,8 +1,10 @@
 package api
 
 import (
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"user.service.altiore.io/repository"
@@ -28,7 +30,82 @@ func (handler *UserHandler) RegisterRoutes(router *gin.Engine) {
 	router.GET("/api/user/:userId/exists", handler.userExists)
 	router.POST("/api/user/registerServiceUsed", handler.registerServiceUsed)
 
+	router.POST("/api/user/create", handler.createUser)
+
 	router.POST("/api/user/signup", handler.signup)
+}
+
+func (handler *UserHandler) createUser(c *gin.Context) {
+
+	// parse and validate body
+	var body struct {
+		UID  string `json:"uid" binding:"required"`
+		Name string `json:"name"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := types.Validate.Struct(body); err != nil {
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// start new db transaction
+	tx, err := handler.core.NewTransaction(c)
+	if err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	defer func() {
+
+		// rollback in case of panic
+		if r := recover(); r != nil {
+			tx.Rollback()
+			c.String(http.StatusInternalServerError, fmt.Sprintf("Internal server error: %v", r))
+			log.Printf("(createUser) panic: %+v\n", r)
+			return
+		}
+
+		// rollback in case of error during transaction
+		if err != nil {
+			tx.Rollback()
+			c.String(http.StatusInternalServerError, fmt.Sprintf("Error processing request: %s", err.Error()))
+			log.Printf("(createUser) error during transaction: %+v\n", err)
+			return
+		}
+
+	}()
+
+	// create user
+	if err := handler.core.CreateUserWithTx(tx, body.UID, body.Name); err != nil {
+		if strings.Contains(err.Error(), "Duplicate entry") {
+			log.Println("user already exists")
+			c.Status(http.StatusConflict)
+			return
+		} else {
+			log.Printf("error occured while creating user: %+v\n", err)
+			c.String(http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	// create organisation and map user to it
+	if err := handler.core.CreateOrganisationWithTx(tx, "My Group", body.UID); err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// try to commit
+	if err := tx.Commit(); err != nil {
+		c.String(http.StatusInternalServerError, fmt.Sprintf("error committing transaction: %s", err.Error()))
+		log.Printf("(createUser) error committing transaction: %+v\n", err)
+		return
+	}
+
+	// send response
+	c.Status(http.StatusCreated)
 }
 
 // Checks whether a user exists in database.

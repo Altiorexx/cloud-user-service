@@ -85,12 +85,46 @@ func NewCoreRepository() *CoreRepository {
 	return core_instance
 }
 
+func (repository *CoreRepository) NewTransaction(ctx context.Context) (*sql.Tx, error) {
+	return repository.client.BeginTx(ctx, &sql.TxOptions{})
+}
+
+func (repository *CoreRepository) Signup(userId string, name string) error {
+	tx, err := repository.client.Begin()
+	if err != nil {
+		return types.ErrTxCancelled
+	}
+
+	defer func() {
+		r := recover()
+		if err != nil {
+			log.Printf("(createUser) error: %+v\n", r)
+			tx.Rollback()
+		}
+	}()
+
+	// create user
+	if err := repository.CreateUserWithTx(tx, userId, name); err != nil {
+		return err
+	}
+
+	// create organisation and map user to it
+	if err := repository.CreateOrganisationWithTx(tx, name, userId); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // Create a user in our system.
 func (repository *CoreRepository) CreateUser(tx *sql.Tx, userId string, name string) error {
 	return repository.CreateUserWithTx(nil, userId, name)
 }
 
-// TODO: Should accept an organisationId and associate the user to that org. If none is passed, create new org.
 func (repository *CoreRepository) CreateUserWithTx(tx *sql.Tx, userId string, name string) error {
 	var c types.Execer = repository.client
 	if tx != nil {
@@ -103,7 +137,7 @@ func (repository *CoreRepository) CreateUserWithTx(tx *sql.Tx, userId string, na
 	defer stmt.Close()
 	_, err = stmt.Exec(userId, name)
 	if err != nil {
-		return types.ErrGenericSQL
+		return err
 	}
 	return nil
 }
@@ -489,7 +523,11 @@ func (repository *CoreRepository) RemoveUserFromOrganisationWithTx(tx *sql.Tx, u
 
 	// otherwise create a default organisation for the user
 	if !rows.Next() {
-		if err = repository.CreateOrganisationWithTx(&c, "My organisation", userId); err != nil {
+		_tx, ok := c.(*sql.Tx)
+		if !ok {
+			return err
+		}
+		if err = repository.CreateOrganisationWithTx(_tx, "My organisation", userId); err != nil {
 			return err
 		}
 	}
@@ -501,11 +539,11 @@ func (repository *CoreRepository) CreateOrganisation(name string, userId string)
 	return repository.CreateOrganisationWithTx(nil, name, userId)
 }
 
-func (repository *CoreRepository) CreateOrganisationWithTx(tx *types.Execer, name string, userId string) error {
+func (repository *CoreRepository) CreateOrganisationWithTx(tx *sql.Tx, name string, userId string) error {
 
 	var c types.Execer = repository.client
 	if tx != nil {
-		c = *tx
+		c = tx
 	}
 
 	// create organisation

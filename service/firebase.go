@@ -25,7 +25,7 @@ func NewFirebaseService() *FirebaseService {
 	firebase_once.Do(func() {
 
 		//option.WithCredentialsJSON()
-		opt := option.WithCredentialsFile("./firebaseServiceAccountKey.json")
+		opt := option.WithCredentialsFile("./cloud-421916-firebase-adminsdk-r2o16-4f7e7089fe.json")
 		app, err := firebase.NewApp(context.Background(), nil, opt)
 		if err != nil {
 			panic(fmt.Errorf("error initializing app: %+v", err))

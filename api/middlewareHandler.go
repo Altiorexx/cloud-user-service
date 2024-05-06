@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -25,7 +26,19 @@ func NewMiddlewareHandler() *MiddlewareHandler {
 
 func (handler *MiddlewareHandler) RegisterRoutes(router *gin.Engine) {
 	router.Use(handler.VerifyToken)
+	// router.Use(handler.LogUserAction)
 	// should also have a middleware to ensure only requests from recognized services go through.
+}
+
+// Logs the request whenever a user has to be verified, for documentation purposes.
+func (handler *MiddlewareHandler) LogUserAction(c *gin.Context) {
+
+	// check that the request is business relevant.
+	// E.g. viewing available services is not important to log, but creating a new case is.
+
+	// store somewhere
+
+	c.Next()
 }
 
 // Verifies the token for every incoming request.
@@ -52,7 +65,7 @@ func (handler *MiddlewareHandler) VerifyToken(c *gin.Context) {
 		return
 	}
 
-	SIGNUP_PATTERN, _ := regexp.Compile("/api/user/signup")
+	SIGNUP_PATTERN, _ := regexp.Compile("/api/user/create")
 	if SIGNUP_PATTERN.MatchString(c.Request.URL.Path) {
 		c.Next()
 		return
@@ -81,12 +94,14 @@ func (handler *MiddlewareHandler) VerifyToken(c *gin.Context) {
 	// decode and verify token through firebase
 	decodedToken, err := handler.firebase.VerifyToken(token)
 	if err != nil {
+		log.Printf("%+v\t%+v\n", decodedToken, err)
 		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
 
 	// check that user exists in our database
 	if err := handler.core.UserExists(decodedToken.UID); err != nil {
+		println(err)
 		c.AbortWithStatus(http.StatusForbidden)
 		handler.firebase.RevokeToken(decodedToken.UID)
 		return
