@@ -73,6 +73,21 @@ func (service *FirebaseService) RevokeToken(uid string) error {
 	return service.auth.RevokeRefreshTokens(context.Background(), uid)
 }
 
+// Check if a user exists by email
+func (service *FirebaseService) UserExists(email string) error {
+	_, err := service.auth.GetUserByEmail(context.Background(), email)
+	return err
+}
+
+// Get userId by email.
+func (service *FirebaseService) GetUserIdByEmail(email string) (string, error) {
+	user, err := service.auth.GetUserByEmail(context.Background(), email)
+	if err != nil {
+		return "", err
+	}
+	return user.UID, nil
+}
+
 func (service *FirebaseService) InviteMember(organisationId string, email string) error {
 
 	// generate link

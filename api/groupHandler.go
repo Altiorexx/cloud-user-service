@@ -13,7 +13,7 @@ import (
 	"user.service.altiore.io/types"
 )
 
-type OrganisationHandler struct {
+type GroupHandler struct {
 	core     *repository.CoreRepository
 	firebase *service.FirebaseService
 	token    *service.TokenService
@@ -22,8 +22,8 @@ type OrganisationHandler struct {
 	domain   string
 }
 
-func NewOrganisationHandler() *OrganisationHandler {
-	return &OrganisationHandler{
+func NewGroupHandler() *GroupHandler {
+	return &GroupHandler{
 		core:     repository.NewCoreRepository(),
 		firebase: service.NewFirebaseService(),
 		token:    service.NewTokenService(),
@@ -33,24 +33,63 @@ func NewOrganisationHandler() *OrganisationHandler {
 	}
 }
 
-func (handler *OrganisationHandler) RegisterRoutes(router *gin.Engine) {
-
-	router.POST("/api/organisation/create", handler.createOrganisation)
-	router.GET("/api/organisation/list", handler.organisationList)
-
+func (handler *GroupHandler) RegisterRoutes(router *gin.Engine) {
+	router.POST("/api/group/create", handler.createOrganisation)
+	router.GET("/api/group/list", handler.organisationList)
+	router.PATCH("/api/group/:id/update", handler.updateMetadata)
 	router.DELETE("/api/group/:id/delete", handler.deleteGroup)
 
-	router.GET("/api/organisation/:id/roles", handler.getRoles)
-
-	router.GET("/api/organisation/:id/members", handler.members)
-
-	router.POST("/api/organisation/member/invite", handler.inviteMember)
+	router.GET("/api/group/:id/members", handler.members)
+	router.POST("/api/group/member/invite", handler.inviteMember)
 	router.DELETE("/api/organisation/member/remove", handler.removeMember)
 
+	router.GET("/api/organisation/:id/roles", handler.getRoles)
+}
+
+func (handler *GroupHandler) updateMetadata(c *gin.Context) {
+
+	groupId := c.Param("id")
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// start transactions
+	tx, err := handler.core.NewTransaction(c.Request.Context())
+	if err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			if err := tx.Rollback(); err != nil {
+				log.Printf("(update group metadata) error on rollback: %+v\n", err)
+			}
+		}
+	}()
+
+	// update name if requested
+	if body.Name != "" {
+		if err := handler.core.UpdateGroupNameWithTx(tx, groupId, body.Name); err != nil {
+			c.String(http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
+	// commit changes
+	if err := tx.Commit(); err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
+		panic(err)
+	}
+
+	c.Status(http.StatusOK)
 }
 
 // Delete a group and related data.
-func (handler *OrganisationHandler) deleteGroup(c *gin.Context) {
+func (handler *GroupHandler) deleteGroup(c *gin.Context) {
 	groupId := c.Param("id")
 
 	// should check whether the user has permission to delete before anything
@@ -62,7 +101,7 @@ func (handler *OrganisationHandler) deleteGroup(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (handler *OrganisationHandler) getRoles(c *gin.Context) {
+func (handler *GroupHandler) getRoles(c *gin.Context) {
 
 	orgId := c.Param("id")
 	if orgId == "" {
@@ -79,7 +118,7 @@ func (handler *OrganisationHandler) getRoles(c *gin.Context) {
 }
 
 // Create a group and adds the requesting user to it.
-func (handler *OrganisationHandler) createOrganisation(c *gin.Context) {
+func (handler *GroupHandler) createOrganisation(c *gin.Context) {
 
 	var body struct {
 		Name string `json:"name" binding:"required"`
@@ -124,7 +163,7 @@ func (handler *OrganisationHandler) createOrganisation(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (handler *OrganisationHandler) members(c *gin.Context) {
+func (handler *GroupHandler) members(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
 		c.String(http.StatusBadRequest, "empty id path parameter")
@@ -138,7 +177,7 @@ func (handler *OrganisationHandler) members(c *gin.Context) {
 	c.JSON(http.StatusOK, members)
 }
 
-func (handler *OrganisationHandler) organisationList(c *gin.Context) {
+func (handler *GroupHandler) organisationList(c *gin.Context) {
 
 	// retrieve token
 	userId, exists := c.Get("userId")
@@ -158,12 +197,12 @@ func (handler *OrganisationHandler) organisationList(c *gin.Context) {
 	c.JSON(http.StatusOK, organisationList)
 }
 
-func (handler *OrganisationHandler) inviteMember(c *gin.Context) {
+func (handler *GroupHandler) inviteMember(c *gin.Context) {
 
 	// parse and validate body
 	var body struct {
-		Email          string `json:"email" binding:"required"`
-		OrganisationId string `json:"organisationId" binding:"required"`
+		Email   string `json:"email" binding:"required"`
+		GroupId string `json:"groupId" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.String(http.StatusBadRequest, err.Error())
@@ -175,8 +214,24 @@ func (handler *OrganisationHandler) inviteMember(c *gin.Context) {
 		return
 	}
 
+	// attempt to get userId from firebase,
+	// if the user doesn't exist, keep going, but make a signup invitation(?)
+	userId, err := handler.firebase.GetUserIdByEmail(body.Email)
+	if err != nil {
+		log.Printf("(invite member) no firebase user found.")
+	} else {
+		// if a user was found in firebase, check whether they are already a part of the group
+		if err := handler.core.IsUserAlreadyMember(userId, body.GroupId); err != nil {
+			c.String(http.StatusConflict, "user is already a member of the group")
+			return
+		}
+	}
+
+	// ensured the user isnt a part of the group already
+	// next thing -> decide which link to generate?
+
 	// generate link
-	invitationId, err := handler.core.CreateInvitation(body.Email, body.OrganisationId)
+	invitationId, err := handler.core.CreateInvitation(body.Email, body.GroupId)
 	if err != nil {
 		c.String(http.StatusInternalServerError, err.Error())
 		return
@@ -194,7 +249,7 @@ func (handler *OrganisationHandler) inviteMember(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (handler *OrganisationHandler) removeMember(c *gin.Context) {
+func (handler *GroupHandler) removeMember(c *gin.Context) {
 
 	// parse body
 	var body struct {

@@ -23,7 +23,7 @@ func NewAPI() *API {
 			NewMiddlewareHandler(),
 			NewUserHandler(),
 			NewServiceHandler(),
-			NewOrganisationHandler(),
+			NewGroupHandler(),
 			NewTokenHandler(),
 		},
 	}
@@ -38,7 +38,7 @@ func (h *API) registerRoutes() {
 func (h *API) cors() {
 	config := cors.DefaultConfig()
 	config.AllowAllOrigins = true
-	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE"}
+	config.AllowMethods = []string{"GET", "POST", "PATCH", "DELETE"}
 	config.AllowHeaders = []string{"Authorization", "Content-Type"}
 	h.router.Use(cors.New(config))
 }

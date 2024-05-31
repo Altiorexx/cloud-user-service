@@ -90,6 +90,28 @@ func (repository *CoreRepository) NewTransaction(ctx context.Context) (*sql.Tx, 
 	return repository.client.BeginTx(ctx, &sql.TxOptions{})
 }
 
+// Updates the group's name.
+func (repository *CoreRepository) UpdateGroupName(groupId string, name string) error {
+	return repository.UpdateGroupNameWithTx(nil, groupId, name)
+}
+
+// Updates the group's name.
+func (repository *CoreRepository) UpdateGroupNameWithTx(tx *sql.Tx, groupId string, name string) error {
+	var c types.Execer = repository.client
+	if tx != nil {
+		c = tx
+	}
+	stmt, err := c.Prepare("UPDATE organisation SET name = ? WHERE id = ?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	if _, err := stmt.Exec(name, groupId); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Deletes the group and all associations.
 func (repository *CoreRepository) DeleteGroup(groupId string) error {
 	return repository.DeleteGroupWithTx(nil, groupId)
@@ -404,7 +426,7 @@ func (repository *CoreRepository) ReadOrganisationMembers(id string) ([]*types.O
 }
 
 // Create an invitation.
-func (repository *CoreRepository) CreateInvitation(email string, organisationId string) (string, error) {
+func (repository *CoreRepository) CreateInvitation(email string, groupId string) (string, error) {
 	// identifier for the mapping between org and email
 	id := uuid.NewString()
 	stmt, err := repository.client.Prepare("INSERT INTO invitation (id, email, organisationId) VALUES (?, ?, ?)")
@@ -412,11 +434,41 @@ func (repository *CoreRepository) CreateInvitation(email string, organisationId 
 		return "", err
 	}
 	defer stmt.Close()
-	_, err = stmt.Exec(id, email, organisationId)
+	_, err = stmt.Exec(id, email, groupId)
 	if err != nil {
 		return "", err
 	}
 	return id, nil
+}
+
+// Checks whether a user is already a part of the group.
+func (repository *CoreRepository) IsUserAlreadyMember(userId string, groupId string) error {
+	stmt, err := repository.client.Prepare("CALL GetUserOrganisations(?)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	rows, err := stmt.Query(userId)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var isMember bool
+	for rows.Next() {
+		var organisation types.Organisation
+		if err := rows.Scan(&organisation.Id, &organisation.Name); err != nil {
+			return err
+		}
+		if organisation.Id == groupId {
+			isMember = true
+			break
+		}
+	}
+	if isMember {
+		return nil
+	} else {
+		return fmt.Errorf("user is already member of the group")
+	}
 }
 
 // Looks up an invitation, ensuring the invitationId is intended for the email.
@@ -462,7 +514,7 @@ func (repository *CoreRepository) DeleteInvitationWithTx(tx *sql.Tx, id string) 
 	return nil
 }
 
-func (repository *CoreRepository) AddUserToOrganisationWithTx(tx *sql.Tx, userId string, organisationId string) error {
+func (repository *CoreRepository) AddUserToOrganisationWithTx(tx *sql.Tx, userId string, groupId string) error {
 	var c types.Execer = repository.client
 	if tx != nil {
 		c = tx
@@ -472,7 +524,7 @@ func (repository *CoreRepository) AddUserToOrganisationWithTx(tx *sql.Tx, userId
 		return types.ErrPrepareStatement
 	}
 	defer stmt.Close()
-	if _, err = stmt.Exec(uuid.NewString(), userId, organisationId); err != nil {
+	if _, err = stmt.Exec(uuid.NewString(), userId, groupId); err != nil {
 		return types.ErrGenericSQL
 	}
 	return nil
