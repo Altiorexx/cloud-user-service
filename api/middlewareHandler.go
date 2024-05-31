@@ -33,12 +33,15 @@ func (handler *MiddlewareHandler) RegisterRoutes(router *gin.Engine) {
 // Logs the request whenever a user has to be verified, for documentation purposes.
 func (handler *MiddlewareHandler) LogUserAction(c *gin.Context) {
 
+	c.Next()
+
 	// check that the request is business relevant.
 	// E.g. viewing available services is not important to log, but creating a new case is.
 
 	// store somewhere
 
-	c.Next()
+	// go next immediately, because the user should not be affected by this at all
+
 }
 
 // Verifies the token for every incoming request.
@@ -59,14 +62,33 @@ func (handler *MiddlewareHandler) VerifyToken(c *gin.Context) {
 		c.Next()
 		return
 	}
-	REGISTER_SERVICE_USED_PATTERN, _ := regexp.Compile("/api/user/registerServiceUsed")
+	/*REGISTER_SERVICE_USED_PATTERN, _ := regexp.Compile("/api/user/registerServiceUsed")
 	if REGISTER_SERVICE_USED_PATTERN.MatchString(c.Request.URL.Path) {
 		c.Next()
 		return
-	}
-
-	SIGNUP_PATTERN, _ := regexp.Compile("/api/user/create")
+	}*/
+	SIGNUP_PATTERN, _ := regexp.Compile("/api/user/signup")
 	if SIGNUP_PATTERN.MatchString(c.Request.URL.Path) {
+		c.Next()
+		return
+	}
+	SIGNUP_PATTERN_EMAIL_PASSWORD, _ := regexp.Compile("/api/user/signup/email_password")
+	if SIGNUP_PATTERN_EMAIL_PASSWORD.MatchString(c.Request.URL.Path) {
+		c.Next()
+		return
+	}
+	LOGIN_PATTERN, _ := regexp.Compile("/api/user/login")
+	if LOGIN_PATTERN.MatchString(c.Request.URL.Path) {
+		c.Next()
+		return
+	}
+	START_PASSWORD_RESET_PATTERN, _ := regexp.Compile("/api/user/start_password_reset")
+	if START_PASSWORD_RESET_PATTERN.MatchString(c.Request.URL.Path) {
+		c.Next()
+		return
+	}
+	RESET_PASSWORD_PATTERN, _ := regexp.Compile("/api/user/reset_password")
+	if RESET_PASSWORD_PATTERN.MatchString(c.Request.URL.Path) {
 		c.Next()
 		return
 	}

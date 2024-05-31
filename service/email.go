@@ -32,13 +32,6 @@ func NewEmailService() *EmailService {
 	return email_instance
 }
 
-// Create a default organisation invitation mail.
-func (service *EmailService) CreateInvitationMail(to string, link string) string {
-	mailHeader := fmt.Sprintf("From:%s\nTo:%s\nSubject: Invitation Link\n\n", service.email, to)
-	mailBody := fmt.Sprintf("Hej john john x, tryk her din klovn: %s", link)
-	return mailHeader + mailBody
-}
-
 // Sends a mail.
 func (service *EmailService) Send(to []string, message string) error {
 	auth := smtp.PlainAuth("", service.email, service.password, "smtp.gmail.com")
@@ -47,4 +40,25 @@ func (service *EmailService) Send(to []string, message string) error {
 		return err
 	}
 	return nil
+}
+
+// Create a default organisation invitation mail.
+func (service *EmailService) CreateInvitationMail(to string, link string) string {
+	mailHeader := fmt.Sprintf("From:%s\nTo:%s\nSubject: Invitation Link\n\n", service.email, to)
+	mailBody := fmt.Sprintf("Hej john john x, tryk her din klovn: %s", link)
+	return mailHeader + mailBody
+}
+
+// Create signup verification email.
+func (service *EmailService) CreateSignupVerification(to string, link string) string {
+	mailHeader := fmt.Sprintf("From:%s\nTo:%s\nSubject: Verification Link\n\n", service.email, to)
+	mailBody := fmt.Sprintf("Hej john john x, tryk her din klovn: %s", link)
+	return mailHeader + mailBody
+}
+
+// Create a reset password link.
+func (service *EmailService) CreateResetPassword(to string, link string) string {
+	mailHeader := fmt.Sprintf("From:%s\nTo:%s\nSubject: Reset password link \n\n", service.email, to)
+	mailBody := fmt.Sprintf("Hello, follow this link to reset your password.\n\n%s", link)
+	return mailHeader + mailBody
 }

@@ -55,6 +55,19 @@ func (service *FirebaseService) VerifyToken(token string) (*auth.Token, error) {
 	return decodedToken, nil
 }
 
+// Set a user's password.
+func (service *FirebaseService) SetNewPassword(uid string, password string) error {
+	changes := &auth.UserToUpdate{}
+	changes.Password(password)
+	_, err := service.auth.UpdateUser(context.Background(), uid, changes)
+	return err
+}
+
+// Allow the user to reset their password through firebase.
+func (service *FirebaseService) ResetPassword(email string) (string, error) {
+	return service.auth.PasswordResetLink(context.Background(), email)
+}
+
 // Revokes a user's refresh token.
 func (service *FirebaseService) RevokeToken(uid string) error {
 	return service.auth.RevokeRefreshTokens(context.Background(), uid)

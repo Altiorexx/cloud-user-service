@@ -26,3 +26,12 @@ type Execer interface {
 	Exec(query string, args ...interface{}) (sql.Result, error)
 	Prepare(query string) (*sql.Stmt, error)
 }
+
+type User struct {
+	Id        string `json:"id"`
+	Name      string `json:"name"`
+	Email     string `json:"email"`
+	Password  string `json:"password"`
+	LastLogin string `json:"lastLogin"`
+	Verified  bool   `json:"verified"`
+}

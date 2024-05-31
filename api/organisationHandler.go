@@ -35,10 +35,12 @@ func NewOrganisationHandler() *OrganisationHandler {
 
 func (handler *OrganisationHandler) RegisterRoutes(router *gin.Engine) {
 
-	//router.GET("/api/organisation/:organisationId", handler.fetch)
-
 	router.POST("/api/organisation/create", handler.createOrganisation)
 	router.GET("/api/organisation/list", handler.organisationList)
+
+	router.DELETE("/api/group/:id/delete", handler.deleteGroup)
+
+	router.GET("/api/organisation/:id/roles", handler.getRoles)
 
 	router.GET("/api/organisation/:id/members", handler.members)
 
@@ -47,8 +49,79 @@ func (handler *OrganisationHandler) RegisterRoutes(router *gin.Engine) {
 
 }
 
+// Delete a group and related data.
+func (handler *OrganisationHandler) deleteGroup(c *gin.Context) {
+	groupId := c.Param("id")
+
+	// should check whether the user has permission to delete before anything
+
+	if err := handler.core.DeleteGroup(groupId); err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+func (handler *OrganisationHandler) getRoles(c *gin.Context) {
+
+	orgId := c.Param("id")
+	if orgId == "" {
+		c.String(http.StatusBadRequest, "no id")
+		return
+	}
+
+	// query db for
+	// 1. defined roles for the org
+	// 2. roles given for each individual user in the org
+
+	c.Status(http.StatusOK)
+
+}
+
+// Create a group and adds the requesting user to it.
 func (handler *OrganisationHandler) createOrganisation(c *gin.Context) {
-	c.Status(http.StatusNotImplemented)
+
+	var body struct {
+		Name string `json:"name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := types.Validate.Struct(body); err != nil {
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// start transaction
+	tx, err := handler.core.NewTransaction(c.Request.Context())
+	if err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("(create group) error on commit: %+v\n", err)
+			if err := tx.Rollback(); err != nil {
+				log.Printf("(create group) error on rollback: %+v\n", err)
+			}
+		}
+	}()
+
+	// create org and add user to it
+	userId, _ := c.Get("userId")
+	if err := handler.core.CreateOrganisationWithTx(tx, body.Name, userId.(string)); err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// commit transaction
+	if err := tx.Commit(); err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
+		panic(err)
+	}
+
+	c.Status(http.StatusOK)
 }
 
 func (handler *OrganisationHandler) members(c *gin.Context) {
@@ -84,43 +157,6 @@ func (handler *OrganisationHandler) organisationList(c *gin.Context) {
 	// send response
 	c.JSON(http.StatusOK, organisationList)
 }
-
-/*func (handler *OrganisationHandler) fetch(c *gin.Context) {
-	// parse body
-	var body any
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.String(http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// validate request
-	if err := types.Validate.Struct(body); err != nil {
-		c.String(http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// decode token
-	tokenData, err := handler.token.ParseToStruct(strings.Split(c.GetHeader("Authorization"), "Bearer ")[1])
-	if err != nil {
-		c.String(http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// get list of cases registered with the organisation(id)
-	handler.cases.ReadCasesList()
-
-	handler.core.ReadOrganisation()
-
-	// get members
-	handler.core.ReadOrganisationMembers()
-
-	// cases, org metadata, members
-	c.JSON(http.StatusOK, gin.H{
-		"metadata": metadata,
-		"casesList": casesList,
-		"members": members,
-	})
-}*/
 
 func (handler *OrganisationHandler) inviteMember(c *gin.Context) {
 

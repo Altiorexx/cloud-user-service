@@ -14,6 +14,7 @@ import (
 	"cloud.google.com/go/cloudsqlconn"
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 	"user.service.altiore.io/service"
 	"user.service.altiore.io/types"
 )
@@ -89,6 +90,73 @@ func (repository *CoreRepository) NewTransaction(ctx context.Context) (*sql.Tx, 
 	return repository.client.BeginTx(ctx, &sql.TxOptions{})
 }
 
+// Deletes the group and all associations.
+func (repository *CoreRepository) DeleteGroup(groupId string) error {
+	return repository.DeleteGroupWithTx(nil, groupId)
+}
+
+// Deletes the group and all associations.
+func (repository *CoreRepository) DeleteGroupWithTx(tx *sql.Tx, groupId string) error {
+	var c types.Execer = repository.client
+	if tx != nil {
+		c = tx
+	}
+	stmt, err := c.Prepare("CALL GroupCleanup(?)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	if _, err := stmt.Exec(groupId); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Updates the password for a user.
+func (repository *CoreRepository) UpdatePassword(uid string, password string) error {
+	stmt, err := repository.client.Prepare("UPDATE user SET password = ? WHERE id = ?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 14)
+	if err != nil {
+		return err
+	}
+	_, err = stmt.Exec(hash, uid)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (repository *CoreRepository) Login(uid string, email string, password string) error {
+	stmt, err := repository.client.Prepare("SELECT id, name, email, password, verified FROM user WHERE id = ? AND email = ?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	var user struct {
+		Id       string
+		Name     string
+		Email    string
+		Password string
+		Verified bool
+	}
+	if err := stmt.QueryRow(uid, email).Scan(&user.Id, &user.Name, &user.Email, &user.Password, &user.Verified); err != nil {
+		return err
+	}
+	// check verified status
+	if !user.Verified {
+		return fmt.Errorf("user hasn't verified their account")
+	}
+	// check password hash
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (repository *CoreRepository) Signup(userId string, name string) error {
 	tx, err := repository.client.Begin()
 	if err != nil {
@@ -98,13 +166,13 @@ func (repository *CoreRepository) Signup(userId string, name string) error {
 	defer func() {
 		r := recover()
 		if err != nil {
-			log.Printf("(createUser) error: %+v\n", r)
+			log.Printf("(signup) error: %+v\n", r)
 			tx.Rollback()
 		}
 	}()
 
 	// create user
-	if err := repository.CreateUserWithTx(tx, userId, name); err != nil {
+	if err := repository.CreateUserWithTx(tx, userId, name, "", ""); err != nil {
 		return err
 	}
 
@@ -120,22 +188,56 @@ func (repository *CoreRepository) Signup(userId string, name string) error {
 	return nil
 }
 
-// Create a user in our system.
-func (repository *CoreRepository) CreateUser(tx *sql.Tx, userId string, name string) error {
-	return repository.CreateUserWithTx(nil, userId, name)
+// Read a user by their given email.
+func (repository *CoreRepository) ReadUserByEmail(email string) (*types.User, error) {
+	stmt, err := repository.client.Prepare("SELECT id, email FROM user WHERE email = ?")
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+
+	var user types.User
+	if err := stmt.QueryRow(email).Scan(&user.Id, &user.Email); err != nil {
+		return nil, err
+	}
+
+	return &user, nil
 }
 
-func (repository *CoreRepository) CreateUserWithTx(tx *sql.Tx, userId string, name string) error {
+// Allow the user to verify their account by link in mail.
+func (repository *CoreRepository) VerifyUser(userId string) error {
+	stmt, err := repository.client.Prepare("UPDATE user SET verified = true WHERE id = ?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(userId)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Create a user in our system.
+func (repository *CoreRepository) CreateUser(tx *sql.Tx, userId string, name string) error {
+	return repository.CreateUserWithTx(nil, userId, name, "", "")
+}
+
+func (repository *CoreRepository) CreateUserWithTx(tx *sql.Tx, userId string, name string, email string, password string) error {
 	var c types.Execer = repository.client
 	if tx != nil {
 		c = tx
 	}
-	stmt, err := c.Prepare("INSERT INTO user (id, name) VALUES (?, ?)")
+	stmt, err := c.Prepare("INSERT INTO user (id, name, email, password, lastLogin, verified) VALUES (?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return types.ErrPrepareStatement
 	}
 	defer stmt.Close()
-	_, err = stmt.Exec(userId, name)
+	hash_password, err := bcrypt.GenerateFromPassword([]byte(password), 14)
+	if err != nil {
+		return err
+	}
+	_, err = stmt.Exec(userId, name, email, hash_password, "", false)
 	if err != nil {
 		return err
 	}
@@ -419,7 +521,7 @@ func (repository *CoreRepository) InvitationSignup(invitationId string, email st
 	}
 
 	// create user in database
-	if err = repository.CreateUserWithTx(tx, userId, name); err != nil {
+	if err = repository.CreateUserWithTx(tx, userId, name, "", ""); err != nil {
 		return err
 	}
 
