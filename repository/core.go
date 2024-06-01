@@ -426,15 +426,15 @@ func (repository *CoreRepository) ReadOrganisationMembers(id string) ([]*types.O
 }
 
 // Create an invitation.
-func (repository *CoreRepository) CreateInvitation(email string, groupId string) (string, error) {
+func (repository *CoreRepository) CreateInvitation(userId string, email string, groupId string) (string, error) {
 	// identifier for the mapping between org and email
 	id := uuid.NewString()
-	stmt, err := repository.client.Prepare("INSERT INTO invitation (id, email, organisationId) VALUES (?, ?, ?)")
+	stmt, err := repository.client.Prepare("INSERT INTO invitation (id, userId, email, organisationId) VALUES (?, ?, ?, ?)")
 	if err != nil {
 		return "", err
 	}
 	defer stmt.Close()
-	_, err = stmt.Exec(id, email, groupId)
+	_, err = stmt.Exec(id, userId, email, groupId)
 	if err != nil {
 		return "", err
 	}
@@ -464,7 +464,7 @@ func (repository *CoreRepository) IsUserAlreadyMember(userId string, groupId str
 			break
 		}
 	}
-	if isMember {
+	if !isMember {
 		return nil
 	} else {
 		return fmt.Errorf("user is already member of the group")
@@ -472,24 +472,25 @@ func (repository *CoreRepository) IsUserAlreadyMember(userId string, groupId str
 }
 
 // Looks up an invitation, ensuring the invitationId is intended for the email.
-func (repository *CoreRepository) LookupInvitation(invitationId string, email string) (string, error) {
-	stmt, err := repository.client.Prepare("SELECT * FROM invitation WHERE id = ? AND email = ?")
+func (repository *CoreRepository) LookupInvitation(invitationId string) (string, string, error) {
+	stmt, err := repository.client.Prepare("SELECT * FROM invitation WHERE id = ?")
 	if err != nil {
-		return "", types.ErrPrepareStatement
+		return "", "", types.ErrPrepareStatement
 	}
 	defer stmt.Close()
 	var inv struct {
-		id    string
-		email string
-		orgId string
+		id     string
+		userId string
+		email  string
+		orgId  string
 	}
-	if err := stmt.QueryRow(invitationId, email).Scan(&inv.id, &inv.email, &inv.orgId); err != nil {
+	if err := stmt.QueryRow(invitationId).Scan(&inv.id, &inv.userId, &inv.email, &inv.orgId); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", types.ErrInvitationNotFound
+			return "", "", types.ErrInvitationNotFound
 		}
-		return "", types.ErrGenericSQL
+		return "", "", types.ErrGenericSQL
 	}
-	return inv.orgId, nil
+	return inv.userId, inv.orgId, nil
 }
 
 // Delete an invitation.
@@ -561,7 +562,7 @@ func (repository *CoreRepository) InvitationSignup(invitationId string, email st
 	}()
 
 	// check for invitation
-	organisationId, err := repository.LookupInvitation(invitationId, email)
+	userId, organisationId, err := repository.LookupInvitation(invitationId)
 	if err != nil {
 		return err
 	}

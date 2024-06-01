@@ -36,7 +36,7 @@ func (handler *UserHandler) RegisterRoutes(router *gin.Engine) {
 	router.POST("/api/user/registerServiceUsed", handler.registerServiceUsed)
 
 	router.POST("/api/user/login", handler.login)
-	router.POST("/api/user/signup", handler.signup)
+	router.POST("/api/user/signup", handler.signup_PROVIDER)
 	router.POST("/api/user/signup/email_password", handler.signup_EMAIL_PASSWORD)
 	router.GET("/api/user/signup/verify", handler.SignupVerify)
 
@@ -235,12 +235,13 @@ func (handler *UserHandler) signup_EMAIL_PASSWORD(c *gin.Context) {
 }
 
 // Signup using a third party provider, Google, Microsoft etc.
-func (handler *UserHandler) signup(c *gin.Context) {
+func (handler *UserHandler) signup_PROVIDER(c *gin.Context) {
 
 	// parse and validate body
 	var body struct {
-		UID  string `json:"uid" binding:"required"`
-		Name string `json:"name"`
+		UID   string `json:"uid" binding:"required"`
+		Name  string `json:"name"`
+		Email string `json:"email" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.String(http.StatusBadRequest, err.Error())
@@ -279,7 +280,7 @@ func (handler *UserHandler) signup(c *gin.Context) {
 	}()
 
 	// create user
-	if err := handler.core.CreateUserWithTx(tx, body.UID, body.Name, "", ""); err != nil {
+	if err := handler.core.CreateUserWithTx(tx, body.UID, body.Name, body.Email, ""); err != nil {
 		if strings.Contains(err.Error(), "Duplicate entry") {
 			log.Println("user already exists")
 			c.Status(http.StatusConflict)
@@ -317,7 +318,7 @@ func (handler *UserHandler) userExists(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-/*
+/* ///////// This method has signup + invitation logic, steal from here..
 func (handler *UserHandler) signup(c *gin.Context) {
 
 	// parse and validate body

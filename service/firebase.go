@@ -99,7 +99,7 @@ func (service *FirebaseService) InviteMember(organisationId string, email string
 	}
 
 	// generate template and send mail
-	message := service.email.CreateInvitationMail(email, link)
+	message := service.email.CreateInvitationMail(email, link, "")
 	if err := service.email.Send([]string{email}, message); err != nil {
 		return err
 	}

@@ -42,11 +42,16 @@ func (service *EmailService) Send(to []string, message string) error {
 	return nil
 }
 
-// Create a default organisation invitation mail.
-func (service *EmailService) CreateInvitationMail(to string, link string) string {
+// Create a default group invitation mail notification.
+func (service *EmailService) CreateInvitationMail(to string, group string, link string) string {
 	mailHeader := fmt.Sprintf("From:%s\nTo:%s\nSubject: Invitation Link\n\n", service.email, to)
-	mailBody := fmt.Sprintf("Hej john john x, tryk her din klovn: %s", link)
+	mailBody := fmt.Sprintf("Hello\nYou have been invited to the group %s.\nFollow this link to accept the invite: %s", group, link)
 	return mailHeader + mailBody
+}
+
+// Create a group invitation + signup mail.
+func (service *EmailService) CreateSignupAndInvitationMail(to string) error {
+	return nil
 }
 
 // Create signup verification email.
