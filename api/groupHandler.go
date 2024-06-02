@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,31 +15,41 @@ import (
 	"user.service.altiore.io/types"
 )
 
-type GroupHandler struct {
+type GroupHandler interface {
+	RegisterRoutes(c *gin.Engine)
+}
+
+type GroupHandlerOpts struct {
+	Firebase service.FirebaseService
+	Email    service.EmailService
+}
+
+type GroupHandlerImpl struct {
 	core          *repository.CoreRepository
 	token         *service.TokenService
 	case_         *service.CaseService
-	email         *service.EmailService
-	firebase      *service.FirebaseService
+	email         service.EmailService
+	firebase      service.FirebaseService
 	domain        string
 	portal_domain string
 }
 
-func NewGroupHandler() *GroupHandler {
-	return &GroupHandler{
+func NewGroupHandler(opts *GroupHandlerOpts) *GroupHandlerImpl {
+	return &GroupHandlerImpl{
 		core:          repository.NewCoreRepository(),
-		firebase:      service.NewFirebaseService(),
+		firebase:      opts.Firebase,
 		token:         service.NewTokenService(),
 		case_:         service.NewCaseService(),
-		email:         service.NewEmailService(),
+		email:         opts.Email,
 		domain:        os.Getenv("DOMAIN"),
 		portal_domain: os.Getenv("PORTAL_DOMAIN"),
 	}
 }
 
-func (handler *GroupHandler) RegisterRoutes(router *gin.Engine) {
+func (handler *GroupHandlerImpl) RegisterRoutes(router *gin.Engine) {
 	router.POST("/api/group/create", handler.createOrganisation)
 	router.GET("/api/group/list", handler.organisationList)
+	router.GET("/api/group/:id", handler.getGroup)
 	router.PATCH("/api/group/:id/update", handler.updateMetadata)
 	router.DELETE("/api/group/:id/delete", handler.deleteGroup)
 
@@ -52,7 +63,23 @@ func (handler *GroupHandler) RegisterRoutes(router *gin.Engine) {
 	router.GET("/api/organisation/:id/roles", handler.getRoles)
 }
 
-func (handler *GroupHandler) updateMetadata(c *gin.Context) {
+// Gets a group's metadata.
+func (handler *GroupHandlerImpl) getGroup(c *gin.Context) {
+	groupId := c.Param("id")
+	group, err := handler.core.ReadGroup(groupId)
+	if err != nil {
+		switch {
+		case errors.Is(err, types.ErrNotFound):
+			c.String(http.StatusNotFound, "group not found")
+			return
+		default:
+			c.String(http.StatusInternalServerError, err.Error())
+		}
+	}
+	c.JSON(http.StatusOK, group)
+}
+
+func (handler *GroupHandlerImpl) updateMetadata(c *gin.Context) {
 
 	groupId := c.Param("id")
 	var body struct {
@@ -95,7 +122,7 @@ func (handler *GroupHandler) updateMetadata(c *gin.Context) {
 }
 
 // Delete a group and related data.
-func (handler *GroupHandler) deleteGroup(c *gin.Context) {
+func (handler *GroupHandlerImpl) deleteGroup(c *gin.Context) {
 	groupId := c.Param("id")
 
 	// should check whether the user has permission to delete before anything
@@ -107,7 +134,7 @@ func (handler *GroupHandler) deleteGroup(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (handler *GroupHandler) getRoles(c *gin.Context) {
+func (handler *GroupHandlerImpl) getRoles(c *gin.Context) {
 
 	orgId := c.Param("id")
 	if orgId == "" {
@@ -123,7 +150,7 @@ func (handler *GroupHandler) getRoles(c *gin.Context) {
 }
 
 // Create a group and adds the requesting user to it.
-func (handler *GroupHandler) createOrganisation(c *gin.Context) {
+func (handler *GroupHandlerImpl) createOrganisation(c *gin.Context) {
 
 	var body struct {
 		Name string `json:"name" binding:"required"`
@@ -168,7 +195,7 @@ func (handler *GroupHandler) createOrganisation(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (handler *GroupHandler) members(c *gin.Context) {
+func (handler *GroupHandlerImpl) members(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
 		c.String(http.StatusBadRequest, "empty id path parameter")
@@ -182,7 +209,7 @@ func (handler *GroupHandler) members(c *gin.Context) {
 	c.JSON(http.StatusOK, members)
 }
 
-func (handler *GroupHandler) organisationList(c *gin.Context) {
+func (handler *GroupHandlerImpl) organisationList(c *gin.Context) {
 
 	// retrieve token
 	userId, exists := c.Get("userId")
@@ -202,7 +229,7 @@ func (handler *GroupHandler) organisationList(c *gin.Context) {
 	c.JSON(http.StatusOK, organisationList)
 }
 
-func (handler *GroupHandler) inviteMember(c *gin.Context) {
+func (handler *GroupHandlerImpl) inviteMember(c *gin.Context) {
 
 	// parse and validate body
 	var body struct {
@@ -271,7 +298,7 @@ func (handler *GroupHandler) inviteMember(c *gin.Context) {
 	}
 }
 
-func (handler *GroupHandler) joinGroup(c *gin.Context) {
+func (handler *GroupHandlerImpl) joinGroup(c *gin.Context) {
 
 	invitationId := c.Query("inv")
 	if invitationId == "" {
@@ -323,7 +350,7 @@ func (handler *GroupHandler) joinGroup(c *gin.Context) {
 
 }
 
-func (handler *GroupHandler) removeMember(c *gin.Context) {
+func (handler *GroupHandlerImpl) removeMember(c *gin.Context) {
 
 	// parse body
 	var body struct {

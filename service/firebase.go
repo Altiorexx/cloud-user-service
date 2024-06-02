@@ -11,43 +11,63 @@ import (
 	"google.golang.org/api/option"
 )
 
-var (
-	firebase_once     sync.Once
-	firebase_instance *FirebaseService
-)
-
-type FirebaseService struct {
-	auth  *auth.Client
-	email *EmailService
+type FirebaseService interface {
+	VerifyToken(token string) (*auth.Token, error)
+	SetNewPassword(uid string, password string) error
+	ResetPassword(email string) (string, error)
+	RevokeToken(uid string) error
+	UserExists(email string) error
+	GetUserIdByEmail(email string) (string, error)
+	InviteMember(organisationId string, email string) error
+	CreateUser(email string, password string, name string) (string, error)
+	DeleteUser(userId string) error
 }
 
-func NewFirebaseService() *FirebaseService {
-	firebase_once.Do(func() {
+type FirebaseServiceOpts struct {
+	Email EmailService
+}
 
-		//option.WithCredentialsJSON()
-		opt := option.WithCredentialsFile("./cloud-421916-firebase-adminsdk-r2o16-4f7e7089fe.json")
-		app, err := firebase.NewApp(context.Background(), nil, opt)
-		if err != nil {
-			panic(fmt.Errorf("error initializing app: %+v", err))
-		}
+var (
+	firebase_service_instance_map map[string]*FirebaseServiceImpl
+	mu                            sync.Mutex
+)
 
-		auth, err := app.Auth(context.Background())
-		if err != nil {
-			panic(fmt.Errorf("error instantiating app: %+v", err))
-		}
+type FirebaseServiceImpl struct {
+	auth  *auth.Client
+	email EmailService
+}
 
-		firebase_instance = &FirebaseService{
-			auth:  auth,
-			email: NewEmailService(),
-		}
-	})
+func NewFirebaseService(opts *FirebaseServiceOpts, key string) *FirebaseServiceImpl {
 
-	// return reference
-	return firebase_instance
+	mu.Lock()
+	defer mu.Unlock()
+
+	if instance, exists := firebase_service_instance_map[key]; exists {
+		return instance
+	}
+
+	//option.WithCredentialsJSON()
+	opt := option.WithCredentialsFile("./cloud-421916-firebase-adminsdk-r2o16-4f7e7089fe.json")
+	app, err := firebase.NewApp(context.Background(), nil, opt)
+	if err != nil {
+		panic(fmt.Errorf("error initializing app: %+v", err))
+	}
+
+	auth, err := app.Auth(context.Background())
+	if err != nil {
+		panic(fmt.Errorf("error instantiating app: %+v", err))
+	}
+
+	firebase_service_instance_map[key] = &FirebaseServiceImpl{
+		auth:  auth,
+		email: opts.Email,
+	}
+
+	return firebase_service_instance_map[key]
 }
 
 // Verifies a token through Firebase, returns the decoded token if valid.
-func (service *FirebaseService) VerifyToken(token string) (*auth.Token, error) {
+func (service *FirebaseServiceImpl) VerifyToken(token string) (*auth.Token, error) {
 	decodedToken, err := service.auth.VerifyIDTokenAndCheckRevoked(context.Background(), token)
 	if err != nil {
 		return nil, err
@@ -56,7 +76,7 @@ func (service *FirebaseService) VerifyToken(token string) (*auth.Token, error) {
 }
 
 // Set a user's password.
-func (service *FirebaseService) SetNewPassword(uid string, password string) error {
+func (service *FirebaseServiceImpl) SetNewPassword(uid string, password string) error {
 	changes := &auth.UserToUpdate{}
 	changes.Password(password)
 	_, err := service.auth.UpdateUser(context.Background(), uid, changes)
@@ -64,23 +84,23 @@ func (service *FirebaseService) SetNewPassword(uid string, password string) erro
 }
 
 // Allow the user to reset their password through firebase.
-func (service *FirebaseService) ResetPassword(email string) (string, error) {
+func (service *FirebaseServiceImpl) ResetPassword(email string) (string, error) {
 	return service.auth.PasswordResetLink(context.Background(), email)
 }
 
 // Revokes a user's refresh token.
-func (service *FirebaseService) RevokeToken(uid string) error {
+func (service *FirebaseServiceImpl) RevokeToken(uid string) error {
 	return service.auth.RevokeRefreshTokens(context.Background(), uid)
 }
 
 // Check if a user exists by email
-func (service *FirebaseService) UserExists(email string) error {
+func (service *FirebaseServiceImpl) UserExists(email string) error {
 	_, err := service.auth.GetUserByEmail(context.Background(), email)
 	return err
 }
 
 // Get userId by email.
-func (service *FirebaseService) GetUserIdByEmail(email string) (string, error) {
+func (service *FirebaseServiceImpl) GetUserIdByEmail(email string) (string, error) {
 	user, err := service.auth.GetUserByEmail(context.Background(), email)
 	if err != nil {
 		return "", err
@@ -88,7 +108,7 @@ func (service *FirebaseService) GetUserIdByEmail(email string) (string, error) {
 	return user.UID, nil
 }
 
-func (service *FirebaseService) InviteMember(organisationId string, email string) error {
+func (service *FirebaseServiceImpl) InviteMember(organisationId string, email string) error {
 
 	// generate link
 	link, err := service.auth.EmailSignInLink(context.Background(), email, &auth.ActionCodeSettings{
@@ -108,7 +128,7 @@ func (service *FirebaseService) InviteMember(organisationId string, email string
 }
 
 // Create a user in firebase.
-func (service *FirebaseService) CreateUser(email string, password string, name string) (string, error) {
+func (service *FirebaseServiceImpl) CreateUser(email string, password string, name string) (string, error) {
 	params := (&auth.UserToCreate{}).Email(email).Password(password).DisplayName(name)
 	user, err := service.auth.CreateUser(context.Background(), params)
 	if err != nil {
@@ -118,6 +138,6 @@ func (service *FirebaseService) CreateUser(email string, password string, name s
 }
 
 // Delete a user in firebase.
-func (service *FirebaseService) DeleteUser(userId string) error {
+func (service *FirebaseServiceImpl) DeleteUser(userId string) error {
 	return service.auth.DeleteUser(context.Background(), userId)
 }

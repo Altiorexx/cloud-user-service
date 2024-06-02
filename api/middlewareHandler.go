@@ -12,26 +12,46 @@ import (
 	"user.service.altiore.io/service"
 )
 
-type MiddlewareHandler struct {
-	core     *repository.CoreRepository
-	firebase *service.FirebaseService
+type MiddlewareHandler interface {
+	RegisterRoutes(*gin.Engine)
 }
 
-func NewMiddlewareHandler() *MiddlewareHandler {
-	return &MiddlewareHandler{
+type MiddlewareHandlerOpts struct {
+	Firebase service.FirebaseService
+}
+
+type MiddlewareHandlerImpl struct {
+	core        *repository.CoreRepository
+	firebase    service.FirebaseService
+	exemptPaths []*regexp.Regexp
+}
+
+func NewMiddlewareHandler(opts *MiddlewareHandlerOpts) *MiddlewareHandlerImpl {
+	return &MiddlewareHandlerImpl{
 		core:     repository.NewCoreRepository(),
-		firebase: service.NewFirebaseService(),
+		firebase: opts.Firebase,
+		exemptPaths: []*regexp.Regexp{
+			regexp.MustCompile("/api/token/verify"),
+			regexp.MustCompile("^/api/user/([a-zA-Z0-9]+)/exists$"),
+			regexp.MustCompile("/api/user/registerServiceUsed"),
+			regexp.MustCompile("/api/user/signup"),
+			regexp.MustCompile("/api/user/signup/email_password"),
+			regexp.MustCompile("/api/user/login"),
+			regexp.MustCompile("/api/user/start_password_reset"),
+			regexp.MustCompile("/api/user/reset_password"),
+			regexp.MustCompile("/api/group/join"),
+		},
 	}
 }
 
-func (handler *MiddlewareHandler) RegisterRoutes(router *gin.Engine) {
+func (handler *MiddlewareHandlerImpl) RegisterRoutes(router *gin.Engine) {
 	router.Use(handler.VerifyToken)
 	// router.Use(handler.LogUserAction)
 	// should also have a middleware to ensure only requests from recognized services go through.
 }
 
 // Logs the request whenever a user has to be verified, for documentation purposes.
-func (handler *MiddlewareHandler) LogUserAction(c *gin.Context) {
+func (handler *MiddlewareHandlerImpl) LogUserAction(c *gin.Context) {
 
 	c.Next()
 
@@ -45,52 +65,18 @@ func (handler *MiddlewareHandler) LogUserAction(c *gin.Context) {
 }
 
 // Verifies the token for every incoming request.
-func (handler *MiddlewareHandler) VerifyToken(c *gin.Context) {
+func (handler *MiddlewareHandlerImpl) VerifyToken(c *gin.Context) {
 
 	// when an internal service sends a request, some kind of allowance should maybe
 	// decided? allow origin or some secret key? -> services should not have the same
 	// token verification that users has..
-	//
-	// this is a simple fix for now, that whitelists specific endpoints, requested by other services
-	TOKEN_VERIFY_PATTERN, _ := regexp.Compile("/api/token/verify")
-	if TOKEN_VERIFY_PATTERN.MatchString(c.Request.URL.Path) {
-		c.Next()
-		return
-	}
-	USER_EXISTS_PATTERN, _ := regexp.Compile("^/api/user/([a-zA-Z0-9]+)/exists$")
-	if USER_EXISTS_PATTERN.MatchString(c.Request.URL.Path) {
-		c.Next()
-		return
-	}
-	/*REGISTER_SERVICE_USED_PATTERN, _ := regexp.Compile("/api/user/registerServiceUsed")
-	if REGISTER_SERVICE_USED_PATTERN.MatchString(c.Request.URL.Path) {
-		c.Next()
-		return
-	}*/
-	SIGNUP_PATTERN, _ := regexp.Compile("/api/user/signup")
-	if SIGNUP_PATTERN.MatchString(c.Request.URL.Path) {
-		c.Next()
-		return
-	}
-	SIGNUP_PATTERN_EMAIL_PASSWORD, _ := regexp.Compile("/api/user/signup/email_password")
-	if SIGNUP_PATTERN_EMAIL_PASSWORD.MatchString(c.Request.URL.Path) {
-		c.Next()
-		return
-	}
-	LOGIN_PATTERN, _ := regexp.Compile("/api/user/login")
-	if LOGIN_PATTERN.MatchString(c.Request.URL.Path) {
-		c.Next()
-		return
-	}
-	START_PASSWORD_RESET_PATTERN, _ := regexp.Compile("/api/user/start_password_reset")
-	if START_PASSWORD_RESET_PATTERN.MatchString(c.Request.URL.Path) {
-		c.Next()
-		return
-	}
-	RESET_PASSWORD_PATTERN, _ := regexp.Compile("/api/user/reset_password")
-	if RESET_PASSWORD_PATTERN.MatchString(c.Request.URL.Path) {
-		c.Next()
-		return
+
+	// don't verify on specified paths
+	for _, path := range handler.exemptPaths {
+		if path.MatchString(c.Request.URL.Path) {
+			c.Next()
+			return
+		}
 	}
 
 	// check if the authorization header is set

@@ -11,31 +11,33 @@ import (
 	"github.com/gin-contrib/cors"
 )
 
-type API struct {
+type API interface {
+	Run()
+}
+
+type API_opts struct {
+	Handlers []types.Handler
+}
+
+type API_impl struct {
 	router   *gin.Engine
 	handlers []types.Handler
 }
 
-func NewAPI() *API {
-	return &API{
-		router: gin.Default(),
-		handlers: []types.Handler{
-			NewMiddlewareHandler(),
-			NewUserHandler(),
-			NewServiceHandler(),
-			NewGroupHandler(),
-			NewTokenHandler(),
-		},
+func NewAPI(opts *API_opts) *API_impl {
+	return &API_impl{
+		router:   gin.Default(),
+		handlers: opts.Handlers,
 	}
 }
 
-func (h *API) registerRoutes() {
+func (h *API_impl) registerRoutes() {
 	for _, handler := range h.handlers {
 		handler.RegisterRoutes(h.router)
 	}
 }
 
-func (h *API) cors() {
+func (h *API_impl) cors() {
 	config := cors.DefaultConfig()
 	config.AllowAllOrigins = true
 	config.AllowMethods = []string{"GET", "POST", "PATCH", "DELETE"}
@@ -43,7 +45,7 @@ func (h *API) cors() {
 	h.router.Use(cors.New(config))
 }
 
-func (h *API) Run() {
+func (h *API_impl) Run() {
 	h.cors()
 	h.registerRoutes()
 	h.router.GET("/:noget", func(c *gin.Context) {

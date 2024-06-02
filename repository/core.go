@@ -471,6 +471,20 @@ func (repository *CoreRepository) IsUserAlreadyMember(userId string, groupId str
 	}
 }
 
+// Read a group.
+func (repository *CoreRepository) ReadGroup(groupId string) (*types.Organisation, error) {
+	stmt, err := repository.client.Prepare("SELECT * FROM organisation WHERE id = ?")
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+	var group types.Organisation
+	if err := stmt.QueryRow(groupId).Scan(&group.Id, &group.Name); err != nil {
+		return nil, err
+	}
+	return &group, nil
+}
+
 // Looks up an invitation, ensuring the invitationId is intended for the email.
 func (repository *CoreRepository) LookupInvitation(invitationId string) (string, string, error) {
 	stmt, err := repository.client.Prepare("SELECT * FROM invitation WHERE id = ?")

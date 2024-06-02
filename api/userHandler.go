@@ -13,25 +13,34 @@ import (
 	"user.service.altiore.io/types"
 )
 
-type UserHandler struct {
+type UserHandler interface {
+	RegisterRoutes(*gin.Engine)
+}
+
+type UserHandlerOpts struct {
+	Firebase service.FirebaseService
+	Email    service.EmailService
+}
+
+type UserHandlerImpl struct {
 	core          *repository.CoreRepository
 	token         *service.TokenService
-	firebase      *service.FirebaseService
-	email         *service.EmailService
+	firebase      service.FirebaseService
+	email         service.EmailService
 	portal_domain string
 }
 
-func NewUserHandler() *UserHandler {
-	return &UserHandler{
+func NewUserHandler(opts *UserHandlerOpts) *UserHandlerImpl {
+	return &UserHandlerImpl{
 		core:          repository.NewCoreRepository(),
 		token:         service.NewTokenService(),
-		firebase:      service.NewFirebaseService(),
-		email:         service.NewEmailService(),
+		firebase:      opts.Firebase,
+		email:         opts.Email,
 		portal_domain: os.Getenv("PORTAL_DOMAIN"),
 	}
 }
 
-func (handler *UserHandler) RegisterRoutes(router *gin.Engine) {
+func (handler *UserHandlerImpl) RegisterRoutes(router *gin.Engine) {
 	router.GET("/api/user/:userId/exists", handler.userExists)
 	router.POST("/api/user/registerServiceUsed", handler.registerServiceUsed)
 
@@ -44,7 +53,7 @@ func (handler *UserHandler) RegisterRoutes(router *gin.Engine) {
 	router.POST("/api/user/reset_password", handler.resetPassword)
 }
 
-func (handler *UserHandler) login(c *gin.Context) {
+func (handler *UserHandlerImpl) login(c *gin.Context) {
 
 	var body struct {
 		UID      string `json:"uid" binding:"required"`
@@ -69,7 +78,7 @@ func (handler *UserHandler) login(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (handler *UserHandler) startPasswordReset(c *gin.Context) {
+func (handler *UserHandlerImpl) startPasswordReset(c *gin.Context) {
 
 	var body struct {
 		Email string `json:"email" binding:"required"`
@@ -100,7 +109,7 @@ func (handler *UserHandler) startPasswordReset(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (handler *UserHandler) resetPassword(c *gin.Context) {
+func (handler *UserHandlerImpl) resetPassword(c *gin.Context) {
 
 	var body struct {
 		UID         string `json:"uid" binding:"required"`
@@ -136,7 +145,7 @@ func (handler *UserHandler) resetPassword(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (handler *UserHandler) SignupVerify(c *gin.Context) {
+func (handler *UserHandlerImpl) SignupVerify(c *gin.Context) {
 
 	// check userId exists (get by query param or smthing)
 	userId := c.Query("u")
@@ -152,7 +161,7 @@ func (handler *UserHandler) SignupVerify(c *gin.Context) {
 }
 
 // Sign up using email, password.
-func (handler *UserHandler) signup_EMAIL_PASSWORD(c *gin.Context) {
+func (handler *UserHandlerImpl) signup_EMAIL_PASSWORD(c *gin.Context) {
 
 	var body struct {
 		UID      string `json:"uid" binding:"required"`
@@ -235,7 +244,7 @@ func (handler *UserHandler) signup_EMAIL_PASSWORD(c *gin.Context) {
 }
 
 // Signup using a third party provider, Google, Microsoft etc.
-func (handler *UserHandler) signup_PROVIDER(c *gin.Context) {
+func (handler *UserHandlerImpl) signup_PROVIDER(c *gin.Context) {
 
 	// parse and validate body
 	var body struct {
@@ -310,7 +319,7 @@ func (handler *UserHandler) signup_PROVIDER(c *gin.Context) {
 }
 
 // Checks whether a user exists in database.
-func (handler *UserHandler) userExists(c *gin.Context) {
+func (handler *UserHandlerImpl) userExists(c *gin.Context) {
 	if err := handler.core.UserExists(c.Param("userId")); err != nil {
 		c.Status(http.StatusNotFound)
 		return
@@ -319,7 +328,7 @@ func (handler *UserHandler) userExists(c *gin.Context) {
 }
 
 /* ///////// This method has signup + invitation logic, steal from here..
-func (handler *UserHandler) signup(c *gin.Context) {
+func (handler *UserHandlerImpl) signup(c *gin.Context) {
 
 	// parse and validate body
 	var body struct {
@@ -360,7 +369,7 @@ func (handler *UserHandler) signup(c *gin.Context) {
 }*/
 
 // Logs when a user uses a service, is triggered by create case.
-func (handler *UserHandler) registerServiceUsed(c *gin.Context) {
+func (handler *UserHandlerImpl) registerServiceUsed(c *gin.Context) {
 
 	// parse body
 	var body *types.RegisterServiceUsedBody
