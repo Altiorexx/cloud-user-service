@@ -28,7 +28,7 @@ type FirebaseServiceOpts struct {
 }
 
 var (
-	firebase_service_instance_map map[string]*FirebaseServiceImpl
+	firebase_service_instance_map = make(map[string]*FirebaseServiceImpl)
 	mu                            sync.Mutex
 )
 

@@ -20,12 +20,13 @@ type GroupHandler interface {
 }
 
 type GroupHandlerOpts struct {
+	Core     repository.CoreRepository
 	Firebase service.FirebaseService
 	Email    service.EmailService
 }
 
 type GroupHandlerImpl struct {
-	core          *repository.CoreRepository
+	core          repository.CoreRepository
 	token         *service.TokenService
 	case_         *service.CaseService
 	email         service.EmailService
@@ -36,7 +37,7 @@ type GroupHandlerImpl struct {
 
 func NewGroupHandler(opts *GroupHandlerOpts) *GroupHandlerImpl {
 	return &GroupHandlerImpl{
-		core:          repository.NewCoreRepository(),
+		core:          opts.Core,
 		firebase:      opts.Firebase,
 		token:         service.NewTokenService(),
 		case_:         service.NewCaseService(),

@@ -17,18 +17,19 @@ type MiddlewareHandler interface {
 }
 
 type MiddlewareHandlerOpts struct {
+	Core     repository.CoreRepository
 	Firebase service.FirebaseService
 }
 
 type MiddlewareHandlerImpl struct {
-	core        *repository.CoreRepository
+	core        repository.CoreRepository
 	firebase    service.FirebaseService
 	exemptPaths []*regexp.Regexp
 }
 
 func NewMiddlewareHandler(opts *MiddlewareHandlerOpts) *MiddlewareHandlerImpl {
 	return &MiddlewareHandlerImpl{
-		core:     repository.NewCoreRepository(),
+		core:     opts.Core,
 		firebase: opts.Firebase,
 		exemptPaths: []*regexp.Regexp{
 			regexp.MustCompile("/api/token/verify"),

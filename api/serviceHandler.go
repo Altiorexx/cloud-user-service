@@ -8,23 +8,31 @@ import (
 	"user.service.altiore.io/repository"
 )
 
-type ServiceHandler struct {
-	core *repository.CoreRepository
+type ServiceHandler interface {
+	RegisterRoutes(*gin.Engine)
 }
 
-func NewServiceHandler() *ServiceHandler {
-	return &ServiceHandler{
-		core: repository.NewCoreRepository(),
+type ServiceHandlerOpts struct {
+	Core repository.CoreRepository
+}
+
+type ServiceHandlerImpl struct {
+	core repository.CoreRepository
+}
+
+func NewServiceHandler(opts *ServiceHandlerOpts) *ServiceHandlerImpl {
+	return &ServiceHandlerImpl{
+		core: opts.Core,
 	}
 }
 
-func (h *ServiceHandler) RegisterRoutes(router *gin.Engine) {
+func (h *ServiceHandlerImpl) RegisterRoutes(router *gin.Engine) {
 	router.GET("/api/service/list", h.serviceList)
 	router.GET("/api/service/implementationGroups", h.implementationGroups)
 }
 
 // This endpoint might be misplaced, can be relocated later on.
-func (h *ServiceHandler) serviceList(c *gin.Context) {
+func (h *ServiceHandlerImpl) serviceList(c *gin.Context) {
 	services, err := h.core.ReadServices()
 	if err != nil {
 		log.Println(err)
@@ -34,7 +42,7 @@ func (h *ServiceHandler) serviceList(c *gin.Context) {
 	c.JSON(http.StatusOK, services)
 }
 
-func (h *ServiceHandler) implementationGroups(c *gin.Context) {
+func (h *ServiceHandlerImpl) implementationGroups(c *gin.Context) {
 	groups, err := h.core.ImplementationGroupCount(c.Query("name"))
 	if err != nil {
 		log.Println(err)

@@ -18,12 +18,13 @@ type UserHandler interface {
 }
 
 type UserHandlerOpts struct {
+	Core     repository.CoreRepository
 	Firebase service.FirebaseService
 	Email    service.EmailService
 }
 
 type UserHandlerImpl struct {
-	core          *repository.CoreRepository
+	core          repository.CoreRepository
 	token         *service.TokenService
 	firebase      service.FirebaseService
 	email         service.EmailService
@@ -32,7 +33,7 @@ type UserHandlerImpl struct {
 
 func NewUserHandler(opts *UserHandlerOpts) *UserHandlerImpl {
 	return &UserHandlerImpl{
-		core:          repository.NewCoreRepository(),
+		core:          opts.Core,
 		token:         service.NewTokenService(),
 		firebase:      opts.Firebase,
 		email:         opts.Email,

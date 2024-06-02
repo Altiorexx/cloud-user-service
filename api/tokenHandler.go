@@ -9,26 +9,35 @@ import (
 	"user.service.altiore.io/service"
 )
 
-type TokenHandler struct {
-	core     *repository.CoreRepository
-	token    *service.TokenService
-	firebase *service.FirebaseService
+type TokenHandler interface {
+	RegisterRoutes(*gin.Engine)
 }
 
-func NewTokenHandler() *TokenHandler {
-	return &TokenHandler{
-		core:     repository.NewCoreRepository(),
+type TokenHandlerOpts struct {
+	Core     repository.CoreRepository
+	Firebase service.FirebaseService
+}
+
+type TokenHandlerImpl struct {
+	core     repository.CoreRepository
+	token    *service.TokenService
+	firebase service.FirebaseService
+}
+
+func NewTokenHandler(opts *TokenHandlerOpts) *TokenHandlerImpl {
+	return &TokenHandlerImpl{
+		core:     opts.Core,
 		token:    service.NewTokenService(),
-		firebase: service.NewFirebaseService(),
+		firebase: opts.Firebase,
 	}
 }
 
-func (handler *TokenHandler) RegisterRoutes(router *gin.Engine) {
+func (handler *TokenHandlerImpl) RegisterRoutes(router *gin.Engine) {
 	router.POST("/api/token/verify", handler.verify)
 }
 
 // Verify a user's token.
-func (handler *TokenHandler) verify(c *gin.Context) {
+func (handler *TokenHandlerImpl) verify(c *gin.Context) {
 
 	// parse and validate body
 	var body struct {

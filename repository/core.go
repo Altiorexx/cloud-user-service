@@ -19,84 +19,127 @@ import (
 	"user.service.altiore.io/types"
 )
 
+type CoreRepository interface {
+	NewTransaction(ctx context.Context) (*sql.Tx, error)
+	UpdateGroupName(groupId string, name string) error
+	UpdateGroupNameWithTx(tx *sql.Tx, groupId string, name string) error
+	DeleteGroup(groupId string) error
+	DeleteGroupWithTx(tx *sql.Tx, groupId string) error
+	UpdatePassword(uid string, password string) error
+	Login(uid string, email string, password string) error
+	Signup(userId string, name string) error
+	ReadUserByEmail(email string) (*types.User, error)
+	VerifyUser(userId string) error
+	CreateUser(tx *sql.Tx, userId string, name string) error
+	CreateUserWithTx(tx *sql.Tx, userId string, name string, email string, password string) error
+	UserExists(uid string) error
+	ReadServices() ([]*types.Service, error)
+	ImplementationGroupCount(serviceName string) (int, error)
+	RegisterUsedService(serviceName string, implementationGroup *int, organisationId string, userId string) error
+	RegisterUsedServiceWithTx(tx *sql.Tx, serviceName string, implementationGroup *int, organisationId string, userId string) error
+	OrganisationList(userId string) ([]*types.Organisation, error)
+	ReadOrganisationMembers(id string) ([]*types.OrganisationMember, error)
+	CreateInvitation(userId string, email string, groupId string) (string, error)
+	IsUserAlreadyMember(userId string, groupId string) error
+	ReadGroup(groupId string) (*types.Organisation, error)
+	LookupInvitation(invitationId string) (string, string, error)
+	DeleteInvitation(id string) error
+	DeleteInvitationWithTx(tx *sql.Tx, id string) error
+	AddUserToOrganisationWithTx(tx *sql.Tx, userId string, groupId string) error
+	AddUserToOrganisation(userId string, organisationId string) error
+	InvitationSignup(invitationId string, email string, password string, name string) error
+	DeleteUser(userId string) error
+	DeleteUserWithTx(tx *sql.Tx, userId string) error
+	RemoveUserFromOrganisation(userId string, organisationId string) error
+	RemoveUserFromOrganisationWithTx(tx *sql.Tx, userId string, organisationId string) error
+	CreateOrganisation(name string, userId string) error
+	CreateOrganisationWithTx(tx *sql.Tx, name string, userId string) error
+}
+
+type CoreRepositoryOpts struct {
+	Firebase service.FirebaseService
+}
+
 var (
-	core_once     sync.Once
-	core_instance *CoreRepository
+	core_repository_instance_map = make(map[string]*CoreRepositoryImpl)
+	mu                           sync.Mutex
 )
 
-type CoreRepository struct {
+type CoreRepositoryImpl struct {
 	client   *sql.DB
-	firebase *service.FirebaseService
+	firebase service.FirebaseService
 }
 
 var (
 	USER_NOT_FOUND = "User not found"
 )
 
-func NewCoreRepository() *CoreRepository {
-	core_once.Do(func() {
+func NewCoreRepository(opts *CoreRepositoryOpts, key string) *CoreRepositoryImpl {
+	mu.Lock()
+	defer mu.Unlock()
+	if instance, exists := core_repository_instance_map[key]; exists {
+		return instance
+	}
 
-		var (
-			uri                = ""
-			user               = os.Getenv("DB_BUSINESS_USER")
-			pass               = os.Getenv("DB_BUSINESS_PASS")
-			host               = os.Getenv("DB_BUSINESS_HOST")
-			port               = os.Getenv("DB_BUSINESS_PORT")
-			instance_conn_name = os.Getenv("DB_BUSINESS_INSTANCE_CONN_NAME")
-		)
+	var (
+		uri                = ""
+		user               = os.Getenv("DB_BUSINESS_USER")
+		pass               = os.Getenv("DB_BUSINESS_PASS")
+		host               = os.Getenv("DB_BUSINESS_HOST")
+		port               = os.Getenv("DB_BUSINESS_PORT")
+		instance_conn_name = os.Getenv("DB_BUSINESS_INSTANCE_CONN_NAME")
+	)
 
-		switch os.Getenv("ENV") {
+	switch os.Getenv("ENV") {
 
-		case "LOCAL":
-			log.Println("loading connection info for local mysql server")
-			uri = fmt.Sprintf("%s:%s@tcp(%s:%s)/core?parseTime=true", user, pass, host, port)
+	case "LOCAL":
+		log.Println("loading connection info for local mysql server")
+		uri = fmt.Sprintf("%s:%s@tcp(%s:%s)/core?parseTime=true", user, pass, host, port)
 
-		default:
-			log.Println("loading connection info for google cloud mysql server...")
-			d, err := cloudsqlconn.NewDialer(context.Background())
-			if err != nil {
-				panic(err)
-			}
-			mysql.RegisterDialContext("cloudsqlconn", func(ctx context.Context, addr string) (net.Conn, error) {
-				return d.Dial(ctx, instance_conn_name, []cloudsqlconn.DialOption{}...)
-			})
-			uri = fmt.Sprintf("%s:%s@cloudsqlconn(localhost:%s)/core?parseTime=true", user, pass, port)
-		}
-		print(uri)
-		db, err := sql.Open("mysql", uri)
+	default:
+		log.Println("loading connection info for google cloud mysql server...")
+		d, err := cloudsqlconn.NewDialer(context.Background())
 		if err != nil {
 			panic(err)
 		}
-		if err := db.Ping(); err != nil {
-			panic(err)
-		}
+		mysql.RegisterDialContext("cloudsqlconn", func(ctx context.Context, addr string) (net.Conn, error) {
+			return d.Dial(ctx, instance_conn_name, []cloudsqlconn.DialOption{}...)
+		})
+		uri = fmt.Sprintf("%s:%s@cloudsqlconn(localhost:%s)/core?parseTime=true", user, pass, port)
+	}
+	print(uri)
+	db, err := sql.Open("mysql", uri)
+	if err != nil {
+		panic(err)
+	}
+	if err := db.Ping(); err != nil {
+		panic(err)
+	}
 
-		db.SetConnMaxLifetime(time.Minute * 3)
-		db.SetMaxOpenConns(10)
-		db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(time.Minute * 3)
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(10)
 
-		log.Println("connected to core database.")
+	log.Println("connected to core database.")
 
-		core_instance = &CoreRepository{
-			client:   db,
-			firebase: service.NewFirebaseService(),
-		}
-	})
-
-	return core_instance
+	core_repository_instance_map[key] = &CoreRepositoryImpl{
+		client:   db,
+		firebase: opts.Firebase,
+	}
+	return core_repository_instance_map[key]
 }
 
-func (repository *CoreRepository) NewTransaction(ctx context.Context) (*sql.Tx, error) {
+func (repository *CoreRepositoryImpl) NewTransaction(ctx context.Context) (*sql.Tx, error) {
 	return repository.client.BeginTx(ctx, &sql.TxOptions{})
 }
 
 // Updates the group's name.
-func (repository *CoreRepository) UpdateGroupName(groupId string, name string) error {
+func (repository *CoreRepositoryImpl) UpdateGroupName(groupId string, name string) error {
 	return repository.UpdateGroupNameWithTx(nil, groupId, name)
 }
 
 // Updates the group's name.
-func (repository *CoreRepository) UpdateGroupNameWithTx(tx *sql.Tx, groupId string, name string) error {
+func (repository *CoreRepositoryImpl) UpdateGroupNameWithTx(tx *sql.Tx, groupId string, name string) error {
 	var c types.Execer = repository.client
 	if tx != nil {
 		c = tx
@@ -113,12 +156,12 @@ func (repository *CoreRepository) UpdateGroupNameWithTx(tx *sql.Tx, groupId stri
 }
 
 // Deletes the group and all associations.
-func (repository *CoreRepository) DeleteGroup(groupId string) error {
+func (repository *CoreRepositoryImpl) DeleteGroup(groupId string) error {
 	return repository.DeleteGroupWithTx(nil, groupId)
 }
 
 // Deletes the group and all associations.
-func (repository *CoreRepository) DeleteGroupWithTx(tx *sql.Tx, groupId string) error {
+func (repository *CoreRepositoryImpl) DeleteGroupWithTx(tx *sql.Tx, groupId string) error {
 	var c types.Execer = repository.client
 	if tx != nil {
 		c = tx
@@ -135,7 +178,7 @@ func (repository *CoreRepository) DeleteGroupWithTx(tx *sql.Tx, groupId string) 
 }
 
 // Updates the password for a user.
-func (repository *CoreRepository) UpdatePassword(uid string, password string) error {
+func (repository *CoreRepositoryImpl) UpdatePassword(uid string, password string) error {
 	stmt, err := repository.client.Prepare("UPDATE user SET password = ? WHERE id = ?")
 	if err != nil {
 		return err
@@ -152,7 +195,7 @@ func (repository *CoreRepository) UpdatePassword(uid string, password string) er
 	return nil
 }
 
-func (repository *CoreRepository) Login(uid string, email string, password string) error {
+func (repository *CoreRepositoryImpl) Login(uid string, email string, password string) error {
 	stmt, err := repository.client.Prepare("SELECT id, name, email, password, verified FROM user WHERE id = ? AND email = ?")
 	if err != nil {
 		return err
@@ -179,7 +222,7 @@ func (repository *CoreRepository) Login(uid string, email string, password strin
 	return nil
 }
 
-func (repository *CoreRepository) Signup(userId string, name string) error {
+func (repository *CoreRepositoryImpl) Signup(userId string, name string) error {
 	tx, err := repository.client.Begin()
 	if err != nil {
 		return types.ErrTxCancelled
@@ -211,7 +254,7 @@ func (repository *CoreRepository) Signup(userId string, name string) error {
 }
 
 // Read a user by their given email.
-func (repository *CoreRepository) ReadUserByEmail(email string) (*types.User, error) {
+func (repository *CoreRepositoryImpl) ReadUserByEmail(email string) (*types.User, error) {
 	stmt, err := repository.client.Prepare("SELECT id, email FROM user WHERE email = ?")
 	if err != nil {
 		return nil, err
@@ -227,7 +270,7 @@ func (repository *CoreRepository) ReadUserByEmail(email string) (*types.User, er
 }
 
 // Allow the user to verify their account by link in mail.
-func (repository *CoreRepository) VerifyUser(userId string) error {
+func (repository *CoreRepositoryImpl) VerifyUser(userId string) error {
 	stmt, err := repository.client.Prepare("UPDATE user SET verified = true WHERE id = ?")
 	if err != nil {
 		return err
@@ -241,11 +284,11 @@ func (repository *CoreRepository) VerifyUser(userId string) error {
 }
 
 // Create a user in our system.
-func (repository *CoreRepository) CreateUser(tx *sql.Tx, userId string, name string) error {
+func (repository *CoreRepositoryImpl) CreateUser(tx *sql.Tx, userId string, name string) error {
 	return repository.CreateUserWithTx(nil, userId, name, "", "")
 }
 
-func (repository *CoreRepository) CreateUserWithTx(tx *sql.Tx, userId string, name string, email string, password string) error {
+func (repository *CoreRepositoryImpl) CreateUserWithTx(tx *sql.Tx, userId string, name string, email string, password string) error {
 	var c types.Execer = repository.client
 	if tx != nil {
 		c = tx
@@ -266,7 +309,7 @@ func (repository *CoreRepository) CreateUserWithTx(tx *sql.Tx, userId string, na
 	return nil
 }
 
-func (repository *CoreRepository) UserExists(uid string) error {
+func (repository *CoreRepositoryImpl) UserExists(uid string) error {
 	stmt, err := repository.client.Prepare("SELECT * FROM user where id = ?")
 	if err != nil {
 		return err
@@ -278,7 +321,7 @@ func (repository *CoreRepository) UserExists(uid string) error {
 	return nil
 }
 
-func (repository *CoreRepository) ReadServices() ([]*types.Service, error) {
+func (repository *CoreRepositoryImpl) ReadServices() ([]*types.Service, error) {
 	rows, err := repository.client.Query("SELECT * FROM service ORDER BY name")
 	if err != nil {
 		return nil, err
@@ -299,7 +342,7 @@ func (repository *CoreRepository) ReadServices() ([]*types.Service, error) {
 	return services, nil
 }
 
-func (repository *CoreRepository) ImplementationGroupCount(serviceName string) (int, error) {
+func (repository *CoreRepositoryImpl) ImplementationGroupCount(serviceName string) (int, error) {
 	stmt, err := repository.client.Prepare("SELECT COUNT(*) FROM service WHERE name = ?")
 	if err != nil {
 		return 0, nil
@@ -312,12 +355,12 @@ func (repository *CoreRepository) ImplementationGroupCount(serviceName string) (
 	return count, nil
 }
 
-func (repository *CoreRepository) RegisterUsedService(serviceName string, implementationGroup *int, organisationId string, userId string) error {
+func (repository *CoreRepositoryImpl) RegisterUsedService(serviceName string, implementationGroup *int, organisationId string, userId string) error {
 	return repository.RegisterUsedServiceWithTx(nil, serviceName, implementationGroup, organisationId, userId)
 }
 
 // Register a user has used a service.
-func (repository *CoreRepository) RegisterUsedServiceWithTx(tx *sql.Tx, serviceName string, implementationGroup *int, organisationId string, userId string) error {
+func (repository *CoreRepositoryImpl) RegisterUsedServiceWithTx(tx *sql.Tx, serviceName string, implementationGroup *int, organisationId string, userId string) error {
 
 	var c types.Execer = repository.client
 	if tx != nil {
@@ -354,7 +397,7 @@ func (repository *CoreRepository) RegisterUsedServiceWithTx(tx *sql.Tx, serviceN
 }
 
 // Read organisations for the user
-func (repository *CoreRepository) OrganisationList(userId string) ([]*types.Organisation, error) {
+func (repository *CoreRepositoryImpl) OrganisationList(userId string) ([]*types.Organisation, error) {
 
 	// prepare query
 	stmt, err := repository.client.Prepare("CALL GetUserOrganisations(?)")
@@ -390,7 +433,7 @@ func (repository *CoreRepository) OrganisationList(userId string) ([]*types.Orga
 }
 
 // Get all members associated with an organisation.
-func (repository *CoreRepository) ReadOrganisationMembers(id string) ([]*types.OrganisationMember, error) {
+func (repository *CoreRepositoryImpl) ReadOrganisationMembers(id string) ([]*types.OrganisationMember, error) {
 
 	// prepare query
 	stmt, err := repository.client.Prepare("CALL GetOrganisationMembers(?)")
@@ -426,7 +469,7 @@ func (repository *CoreRepository) ReadOrganisationMembers(id string) ([]*types.O
 }
 
 // Create an invitation.
-func (repository *CoreRepository) CreateInvitation(userId string, email string, groupId string) (string, error) {
+func (repository *CoreRepositoryImpl) CreateInvitation(userId string, email string, groupId string) (string, error) {
 	// identifier for the mapping between org and email
 	id := uuid.NewString()
 	stmt, err := repository.client.Prepare("INSERT INTO invitation (id, userId, email, organisationId) VALUES (?, ?, ?, ?)")
@@ -442,7 +485,7 @@ func (repository *CoreRepository) CreateInvitation(userId string, email string, 
 }
 
 // Checks whether a user is already a part of the group.
-func (repository *CoreRepository) IsUserAlreadyMember(userId string, groupId string) error {
+func (repository *CoreRepositoryImpl) IsUserAlreadyMember(userId string, groupId string) error {
 	stmt, err := repository.client.Prepare("CALL GetUserOrganisations(?)")
 	if err != nil {
 		return err
@@ -472,7 +515,7 @@ func (repository *CoreRepository) IsUserAlreadyMember(userId string, groupId str
 }
 
 // Read a group.
-func (repository *CoreRepository) ReadGroup(groupId string) (*types.Organisation, error) {
+func (repository *CoreRepositoryImpl) ReadGroup(groupId string) (*types.Organisation, error) {
 	stmt, err := repository.client.Prepare("SELECT * FROM organisation WHERE id = ?")
 	if err != nil {
 		return nil, err
@@ -486,7 +529,7 @@ func (repository *CoreRepository) ReadGroup(groupId string) (*types.Organisation
 }
 
 // Looks up an invitation, ensuring the invitationId is intended for the email.
-func (repository *CoreRepository) LookupInvitation(invitationId string) (string, string, error) {
+func (repository *CoreRepositoryImpl) LookupInvitation(invitationId string) (string, string, error) {
 	stmt, err := repository.client.Prepare("SELECT * FROM invitation WHERE id = ?")
 	if err != nil {
 		return "", "", types.ErrPrepareStatement
@@ -508,11 +551,11 @@ func (repository *CoreRepository) LookupInvitation(invitationId string) (string,
 }
 
 // Delete an invitation.
-func (repository *CoreRepository) DeleteInvitation(id string) error {
+func (repository *CoreRepositoryImpl) DeleteInvitation(id string) error {
 	return repository.DeleteInvitationWithTx(nil, id)
 }
 
-func (repository *CoreRepository) DeleteInvitationWithTx(tx *sql.Tx, id string) error {
+func (repository *CoreRepositoryImpl) DeleteInvitationWithTx(tx *sql.Tx, id string) error {
 	var c types.Execer = repository.client
 	if tx != nil {
 		c = tx
@@ -529,7 +572,7 @@ func (repository *CoreRepository) DeleteInvitationWithTx(tx *sql.Tx, id string) 
 	return nil
 }
 
-func (repository *CoreRepository) AddUserToOrganisationWithTx(tx *sql.Tx, userId string, groupId string) error {
+func (repository *CoreRepositoryImpl) AddUserToOrganisationWithTx(tx *sql.Tx, userId string, groupId string) error {
 	var c types.Execer = repository.client
 	if tx != nil {
 		c = tx
@@ -545,11 +588,11 @@ func (repository *CoreRepository) AddUserToOrganisationWithTx(tx *sql.Tx, userId
 	return nil
 }
 
-func (repository *CoreRepository) AddUserToOrganisation(userId string, organisationId string) error {
+func (repository *CoreRepositoryImpl) AddUserToOrganisation(userId string, organisationId string) error {
 	return repository.AddUserToOrganisationWithTx(nil, userId, organisationId)
 }
 
-func (repository *CoreRepository) InvitationSignup(invitationId string, email string, password string, name string) error {
+func (repository *CoreRepositoryImpl) InvitationSignup(invitationId string, email string, password string, name string) error {
 
 	var userId string
 
@@ -610,12 +653,12 @@ func (repository *CoreRepository) InvitationSignup(invitationId string, email st
 }
 
 // Non-tx method for deleting a user.
-func (repository *CoreRepository) DeleteUser(userId string) error {
+func (repository *CoreRepositoryImpl) DeleteUser(userId string) error {
 	return repository.DeleteInvitationWithTx(nil, userId)
 }
 
 // Cleanup method to delete everything associated with the userId (user and organisation relations).
-func (repository *CoreRepository) DeleteUserWithTx(tx *sql.Tx, userId string) error {
+func (repository *CoreRepositoryImpl) DeleteUserWithTx(tx *sql.Tx, userId string) error {
 
 	var c types.Execer = repository.client
 	if tx != nil {
@@ -644,12 +687,12 @@ func (repository *CoreRepository) DeleteUserWithTx(tx *sql.Tx, userId string) er
 }
 
 // Non-tx method for removing a user from an organisation.
-func (repository *CoreRepository) RemoveUserFromOrganisation(userId string, organisationId string) error {
+func (repository *CoreRepositoryImpl) RemoveUserFromOrganisation(userId string, organisationId string) error {
 	return repository.RemoveUserFromOrganisationWithTx(nil, userId, organisationId)
 }
 
 // Remove a user from an organisation, if user has no organisation left after removal, create a default one.
-func (repository *CoreRepository) RemoveUserFromOrganisationWithTx(tx *sql.Tx, userId string, organisationId string) error {
+func (repository *CoreRepositoryImpl) RemoveUserFromOrganisationWithTx(tx *sql.Tx, userId string, organisationId string) error {
 
 	var c types.Execer = repository.client
 	if tx != nil {
@@ -704,11 +747,11 @@ func (repository *CoreRepository) RemoveUserFromOrganisationWithTx(tx *sql.Tx, u
 	return nil
 }
 
-func (repository *CoreRepository) CreateOrganisation(name string, userId string) error {
+func (repository *CoreRepositoryImpl) CreateOrganisation(name string, userId string) error {
 	return repository.CreateOrganisationWithTx(nil, name, userId)
 }
 
-func (repository *CoreRepository) CreateOrganisationWithTx(tx *sql.Tx, name string, userId string) error {
+func (repository *CoreRepositoryImpl) CreateOrganisationWithTx(tx *sql.Tx, name string, userId string) error {
 
 	var c types.Execer = repository.client
 	if tx != nil {
