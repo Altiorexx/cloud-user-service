@@ -27,7 +27,6 @@ type GroupHandlerOpts struct {
 
 type GroupHandlerImpl struct {
 	core          repository.CoreRepository
-	token         *service.TokenService
 	case_         *service.CaseService
 	email         service.EmailService
 	firebase      service.FirebaseService
@@ -39,7 +38,6 @@ func NewGroupHandler(opts *GroupHandlerOpts) *GroupHandlerImpl {
 	return &GroupHandlerImpl{
 		core:          opts.Core,
 		firebase:      opts.Firebase,
-		token:         service.NewTokenService(),
 		case_:         service.NewCaseService(),
 		email:         opts.Email,
 		domain:        os.Getenv("DOMAIN"),
@@ -53,35 +51,35 @@ func (handler *GroupHandlerImpl) RegisterRoutes(router *gin.Engine) {
 	router.GET("/api/group/:id", handler.getGroup)
 	router.PATCH("/api/group/:id/update", handler.updateMetadata)
 	router.DELETE("/api/group/:id/delete", handler.deleteGroup)
-
 	router.GET("/api/group/:id/members", handler.members)
-
 	router.POST("/api/group/member/invite", handler.inviteMember)
 	router.GET("/api/group/join", handler.joinGroup)
 
 	router.DELETE("/api/organisation/member/remove", handler.removeMember)
-
 	router.GET("/api/organisation/:id/roles", handler.getRoles)
 }
 
 // Gets a group's metadata.
 func (handler *GroupHandlerImpl) getGroup(c *gin.Context) {
+	ctx := c.Request.Context()
 	groupId := c.Param("id")
-	group, err := handler.core.ReadGroup(groupId)
+	group, err := handler.core.ReadGroup(ctx, groupId)
 	if err != nil {
+		log.Printf("failed to read group %s: %v\n", groupId, err)
 		switch {
 		case errors.Is(err, types.ErrNotFound):
-			c.String(http.StatusNotFound, "group not found")
+			c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
 			return
 		default:
-			c.String(http.StatusInternalServerError, err.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
 		}
 	}
 	c.JSON(http.StatusOK, group)
 }
 
 func (handler *GroupHandlerImpl) updateMetadata(c *gin.Context) {
-
+	ctx := c.Request.Context()
 	groupId := c.Param("id")
 	var body struct {
 		Name string `json:"name"`
@@ -92,18 +90,11 @@ func (handler *GroupHandlerImpl) updateMetadata(c *gin.Context) {
 	}
 
 	// start transactions
-	tx, err := handler.core.NewTransaction(c.Request.Context())
+	tx, err := handler.core.NewTransaction(ctx)
 	if err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	defer func() {
-		if r := recover(); r != nil {
-			if err := tx.Rollback(); err != nil {
-				log.Printf("(update group metadata) error on rollback: %+v\n", err)
-			}
-		}
-	}()
 
 	// update name if requested
 	if body.Name != "" {
@@ -114,9 +105,15 @@ func (handler *GroupHandlerImpl) updateMetadata(c *gin.Context) {
 	}
 
 	// commit changes
-	if err := tx.Commit(); err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
-		panic(err)
+	if err := handler.core.CommitTransaction(tx); err != nil {
+		log.Printf("failed to commit group metadata changes: %+v\n", err)
+		switch {
+		case errors.Is(err, types.ErrTxCommit):
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		case errors.Is(err, types.ErrRollback):
+			return
+		}
 	}
 
 	c.Status(http.StatusOK)
@@ -348,7 +345,6 @@ func (handler *GroupHandlerImpl) joinGroup(c *gin.Context) {
 
 	// then redirect to /invited, to show the user that they were sucessfully invited to the group (just a one-liner page -> use reset pw page)
 	c.Redirect(http.StatusPermanentRedirect, fmt.Sprintf("%s/invited", handler.portal_domain))
-
 }
 
 func (handler *GroupHandlerImpl) removeMember(c *gin.Context) {

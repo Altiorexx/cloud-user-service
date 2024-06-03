@@ -25,7 +25,6 @@ type UserHandlerOpts struct {
 
 type UserHandlerImpl struct {
 	core          repository.CoreRepository
-	token         *service.TokenService
 	firebase      service.FirebaseService
 	email         service.EmailService
 	portal_domain string
@@ -34,7 +33,6 @@ type UserHandlerImpl struct {
 func NewUserHandler(opts *UserHandlerOpts) *UserHandlerImpl {
 	return &UserHandlerImpl{
 		core:          opts.Core,
-		token:         service.NewTokenService(),
 		firebase:      opts.Firebase,
 		email:         opts.Email,
 		portal_domain: os.Getenv("PORTAL_DOMAIN"),

@@ -20,14 +20,12 @@ type TokenHandlerOpts struct {
 
 type TokenHandlerImpl struct {
 	core     repository.CoreRepository
-	token    *service.TokenService
 	firebase service.FirebaseService
 }
 
 func NewTokenHandler(opts *TokenHandlerOpts) *TokenHandlerImpl {
 	return &TokenHandlerImpl{
 		core:     opts.Core,
-		token:    service.NewTokenService(),
 		firebase: opts.Firebase,
 	}
 }

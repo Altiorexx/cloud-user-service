@@ -4,13 +4,15 @@ import "errors"
 
 // core repository
 var (
-	ErrTxCancelled        = errors.New("transaction was cancelled")
-	ErrRollback           = errors.New("unable to perform rollback")
+	ErrTxCommit         = errors.New("error committing transaction")
+	ErrRollback         = errors.New("unable to perform rollback")
+	ErrPrepareStatement = errors.New("error preparing statement")
+	ErrNotFound         = errors.New("not found")
+
+	ErrTxCancelled = errors.New("transaction was cancelled")
+
 	ErrInvitationNotFound = errors.New("invitation not found")
-	ErrPrepareStatement   = errors.New("error preparing statement")
 	ErrGenericSQL         = errors.New("generic sql error")
-	ErrTxCommit           = errors.New("error committing transaction")
-	ErrNotFound           = errors.New("not found")
 )
 
 // firebase service

@@ -21,6 +21,7 @@ import (
 
 type CoreRepository interface {
 	NewTransaction(ctx context.Context) (*sql.Tx, error)
+	CommitTransaction(tx *sql.Tx) error
 	UpdateGroupName(groupId string, name string) error
 	UpdateGroupNameWithTx(tx *sql.Tx, groupId string, name string) error
 	DeleteGroup(groupId string) error
@@ -41,7 +42,7 @@ type CoreRepository interface {
 	ReadOrganisationMembers(id string) ([]*types.OrganisationMember, error)
 	CreateInvitation(userId string, email string, groupId string) (string, error)
 	IsUserAlreadyMember(userId string, groupId string) error
-	ReadGroup(groupId string) (*types.Organisation, error)
+	ReadGroup(ctx context.Context, groupId string) (*types.Organisation, error)
 	LookupInvitation(invitationId string) (string, string, error)
 	DeleteInvitation(id string) error
 	DeleteInvitationWithTx(tx *sql.Tx, id string) error
@@ -69,10 +70,6 @@ type CoreRepositoryImpl struct {
 	client   *sql.DB
 	firebase service.FirebaseService
 }
-
-var (
-	USER_NOT_FOUND = "User not found"
-)
 
 func NewCoreRepository(opts *CoreRepositoryOpts, key string) *CoreRepositoryImpl {
 	mu.Lock()
@@ -129,8 +126,26 @@ func NewCoreRepository(opts *CoreRepositoryOpts, key string) *CoreRepositoryImpl
 	return core_repository_instance_map[key]
 }
 
+// Creates a new transaction.
 func (repository *CoreRepositoryImpl) NewTransaction(ctx context.Context) (*sql.Tx, error) {
-	return repository.client.BeginTx(ctx, &sql.TxOptions{})
+	tx, err := repository.client.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	return tx, nil
+}
+
+// Attempts to commit the transaction and performs a rollback if an error occurs.
+func (repository *CoreRepositoryImpl) CommitTransaction(tx *sql.Tx) error {
+	if err := tx.Commit(); err != nil {
+		log.Printf("transaction commit failed: %+v\n", err)
+		if err := tx.Rollback(); err != nil {
+			log.Printf("transaction rollback failed: %+v\n", err)
+			return fmt.Errorf("%w: %v", types.ErrRollback, err)
+		}
+		return fmt.Errorf("%w: %v", types.ErrTxCommit, err)
+	}
+	return nil
 }
 
 // Updates the group's name.
@@ -515,15 +530,18 @@ func (repository *CoreRepositoryImpl) IsUserAlreadyMember(userId string, groupId
 }
 
 // Read a group.
-func (repository *CoreRepositoryImpl) ReadGroup(groupId string) (*types.Organisation, error) {
-	stmt, err := repository.client.Prepare("SELECT * FROM organisation WHERE id = ?")
+func (repository *CoreRepositoryImpl) ReadGroup(ctx context.Context, groupId string) (*types.Organisation, error) {
+	stmt, err := repository.client.PrepareContext(ctx, "SELECT * FROM organisation WHERE id = ?")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}
 	defer stmt.Close()
 	var group types.Organisation
 	if err := stmt.QueryRow(groupId).Scan(&group.Id, &group.Name); err != nil {
-		return nil, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: group %s not found", types.ErrNotFound, groupId)
+		}
+		return nil, fmt.Errorf("failed to read group %s: %w", groupId, err)
 	}
 	return &group, nil
 }
