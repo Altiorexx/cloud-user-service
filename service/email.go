@@ -9,7 +9,7 @@ import (
 type EmailService interface {
 	Send(to []string, message string) error
 	CreateInvitationMail(to string, group string, link string) string
-	CreateSignupAndInvitationMail(to string) error
+	CreateSignupAndInvitationMail(to string, group string, link string) string
 	CreateSignupVerification(to string, link string) string
 	CreateResetPassword(to string, link string) string
 }
@@ -45,9 +45,11 @@ func (service *EmailServiceImpl) CreateInvitationMail(to string, group string, l
 	return mailHeader + mailBody
 }
 
-// Create a group invitation + signup mail.
-func (service *EmailServiceImpl) CreateSignupAndInvitationMail(to string) error {
-	return nil
+// Create a group signup invitation flow  mail.
+func (service *EmailServiceImpl) CreateSignupAndInvitationMail(to string, group string, link string) string {
+	mailHeader := fmt.Sprintf("From:%s\nTo:%s\nSubject: Invitation Link\n\n", service.email, to)
+	mailBody := fmt.Sprintf("Hello\nYou have been invited to the group %s, but you are not a user yet!\nFollow this link to sign up and accept the invite: %s", group, link)
+	return mailHeader + mailBody
 }
 
 // Create signup verification email.

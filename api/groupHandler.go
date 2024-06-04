@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -54,8 +53,10 @@ func (handler *GroupHandlerImpl) RegisterRoutes(router *gin.Engine) {
 	router.GET("/api/group/:id/members", handler.members)
 	router.POST("/api/group/member/invite", handler.inviteMember)
 	router.GET("/api/group/join", handler.joinGroup)
+	router.DELETE("/api/group/member/remove", handler.removeMember)
 
-	router.DELETE("/api/organisation/member/remove", handler.removeMember)
+	router.GET("/api/group/reject", handler.rejectGroup)
+
 	router.GET("/api/organisation/:id/roles", handler.getRoles)
 }
 
@@ -105,6 +106,7 @@ func (handler *GroupHandlerImpl) updateMetadata(c *gin.Context) {
 	}
 
 	// commit changes
+	// can be reduced to simple err check, but this is a good pattern!
 	if err := handler.core.CommitTransaction(tx); err != nil {
 		log.Printf("failed to commit group metadata changes: %+v\n", err)
 		switch {
@@ -112,6 +114,7 @@ func (handler *GroupHandlerImpl) updateMetadata(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		case errors.Is(err, types.ErrRollback):
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
 	}
@@ -231,7 +234,6 @@ func (handler *GroupHandlerImpl) inviteMember(c *gin.Context) {
 
 	// parse and validate body
 	var body struct {
-		UserId  string `json:"userId" binding:"required"`
 		Email   string `json:"email" binding:"required"`
 		GroupId string `json:"groupId" binding:"required"`
 		Name    string `json:"name" binding:"required"`
@@ -256,119 +258,164 @@ func (handler *GroupHandlerImpl) inviteMember(c *gin.Context) {
 	if err == nil && userId != "" {
 		// if a user was found in firebase, check whether they are already a part of the group
 		if err := handler.core.IsUserAlreadyMember(userId, body.GroupId); err != nil {
-			c.String(http.StatusConflict, "user is already a member of the group")
+			c.JSON(http.StatusConflict, gin.H{"error": "user is already a member of the group"})
 			return
 		}
 	}
 
-	// if no user was found in firebase, do a signup + invitation flow
+	// generate link
+	invitationId, err := handler.core.CreateInvitation(userId, body.Email, body.GroupId)
+	if err != nil {
+		log.Printf("error creating invitation: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "error creating invitation"})
+		return
+	}
+	link := fmt.Sprintf("%s/api/group/join?inv=%s", handler.domain, invitationId)
+
+	// if no user was found, send an signin invitation flow
+	// else send a simple accept / reject invitation flow
+	var message string
 	if userId == "" {
-		log.Printf("%+v\n", body)
+		message = handler.email.CreateSignupAndInvitationMail(body.Email, body.Name, link)
+	} else {
+		message = handler.email.CreateInvitationMail(body.Email, body.Name, link)
+	}
+	if err := handler.email.Send([]string{body.Email}, message); err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
+		return
 	}
 
-	// if a user was found in firebase, do a simple invitation flow
-	if userId != "" {
-
-		// generate link
-		invitationId, err := handler.core.CreateInvitation(userId, body.Email, body.GroupId)
-		if err != nil {
-			c.String(http.StatusInternalServerError, err.Error())
-			return
-		}
-		link := fmt.Sprintf("%s/api/group/join?inv=%s", handler.domain, invitationId)
-
-		// generate template and send mail
-		message := handler.email.CreateInvitationMail(body.Email, body.Name, link)
-		if err := handler.email.Send([]string{body.Email}, message); err != nil {
-			c.String(http.StatusInternalServerError, err.Error())
-			return
-		}
-
-		// send response
-		c.Status(http.StatusOK)
-
-		// specify user to invite
-		// create link including invitationId
-		// user clicks link in email
-		// points to user.service/api/group/join, which adds the user to the group and removes the invitation
-		// then user is redirected to portal.app/invitation_ok (if things are ok, later inviter can retract the invite, but not now christ)
-
-	}
+	// send response
+	c.Status(http.StatusOK)
 }
 
 func (handler *GroupHandlerImpl) joinGroup(c *gin.Context) {
-
+	ctx := c.Request.Context()
 	invitationId := c.Query("inv")
 	if invitationId == "" {
 		c.String(http.StatusBadRequest, "no invitation id found")
 		return
 	}
 
-	userId, groupId, err := handler.core.LookupInvitation(invitationId)
+	// lookup invitation
+	userId, groupId, email, err := handler.core.LookupInvitation(invitationId)
 	if err != nil {
-		c.String(http.StatusNotFound, "no invitation found for the given invitationId")
-		return
+		switch {
+		case errors.Is(err, types.ErrNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "no invitation found for the given invitationId"})
+			return
+		case errors.Is(err, types.ErrPrepareStatement):
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "error reading invitation"})
+			return
+		}
 	}
 
-	tx, err := handler.core.NewTransaction(context.Background())
+	// if invitation was for a user, not yet registered and only the email were provided,
+	// then lookup the user as they have only registered after receiving the invite.
+	user, err := handler.core.ReadUserByEmail(email)
+	if err != nil {
+		switch {
+		case errors.Is(err, types.ErrNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+			return
+		case errors.Is(err, types.ErrPrepareStatement):
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "error reading user"})
+			return
+		}
+	}
+
+	// create transaction
+	tx, err := handler.core.NewTransaction(ctx)
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
 		return
 	}
 
-	// rollback
-	defer func() {
-		if err != nil {
-			if rbErr := tx.Rollback(); rbErr != nil {
-				panic(types.ErrRollback)
-			}
-		}
-	}()
+	// decide what type of user is invited, either an existing user or non-existing user
+	var redirect_link string
+	if userId == "" {
+		userId = user.Id
+		redirect_link = fmt.Sprintf("%s/signup?inv=%s", handler.portal_domain, invitationId)
+	} else {
+		redirect_link = fmt.Sprintf("%s/invited", handler.portal_domain)
+	}
 
 	// add user to group
-	if err = handler.core.AddUserToOrganisationWithTx(tx, userId, groupId); err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
+	if err := handler.core.AddUserToOrganisationWithTx(tx, userId, groupId); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// delete invitation
-	if err = handler.core.DeleteInvitationWithTx(tx, invitationId); err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
+	if err := handler.core.DeleteInvitationWithTx(tx, invitationId); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// commit changes
-	if err := tx.Commit(); err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
-		panic(types.ErrTxCommit)
-	}
-
-	// then redirect to /invited, to show the user that they were sucessfully invited to the group (just a one-liner page -> use reset pw page)
-	c.Redirect(http.StatusPermanentRedirect, fmt.Sprintf("%s/invited", handler.portal_domain))
-}
-
-func (handler *GroupHandlerImpl) removeMember(c *gin.Context) {
-
-	// parse body
-	var body struct {
-		UserId         string `json:"userId" binding:"required"`
-		OrganisationId string `json:"organisationId" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.String(http.StatusBadRequest, err.Error())
+	if err := handler.core.CommitTransaction(tx); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := handler.core.RemoveUserFromOrganisation(body.UserId, body.OrganisationId); err != nil {
+	// redirect to an error page if things went wrong -> the user should not experience an 'error' http blank page thing..
+
+	// redirects to /invited if the user already is a user in the system
+	// otherwise to /signup?inv=xxx, so the user can sign up and instantly be associated with the group
+	c.Redirect(http.StatusPermanentRedirect, redirect_link)
+}
+
+func (handler *GroupHandlerImpl) rejectGroup(c *gin.Context) {
+
+	invitationId := c.Query("inv")
+	if invitationId == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no invitation id given"})
+		return
+	}
+
+	// remove invitation from db
+	if err := handler.core.DeleteInvitation(invitationId); err != nil {
+		log.Printf("error deleting invitation: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "error deleting invitation"})
+		return
+	}
+
+	// redirect to rejected page (use reset, invited page layout)
+	c.Redirect(http.StatusPermanentRedirect, fmt.Sprintf("%s/rejected", handler.portal_domain))
+}
+
+func (handler *GroupHandlerImpl) removeMember(c *gin.Context) {
+	var body struct {
+		UserId  string `json:"userId" binding:"required"`
+		GroupId string `json:"groupId" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	tx, err := handler.core.NewTransaction(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	if err := handler.core.RemoveUserFromOrganisationWithTx(tx, body.UserId, body.GroupId); err != nil {
+		log.Printf("error removing user from group: %+v\n", err)
 		switch err {
 		case types.ErrNotFound:
-			c.String(http.StatusNotFound, err.Error())
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return
 		default:
-			c.String(http.StatusInternalServerError, err.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 	}
-
+	if err := handler.core.CommitTransaction(tx); err != nil {
+		log.Printf("error commiting transaction: %+v\n", err)
+		switch {
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
+	}
 	c.Status(http.StatusOK)
 }

@@ -43,7 +43,7 @@ type CoreRepository interface {
 	CreateInvitation(userId string, email string, groupId string) (string, error)
 	IsUserAlreadyMember(userId string, groupId string) error
 	ReadGroup(ctx context.Context, groupId string) (*types.Organisation, error)
-	LookupInvitation(invitationId string) (string, string, error)
+	LookupInvitation(invitationId string) (string, string, string, error)
 	DeleteInvitation(id string) error
 	DeleteInvitationWithTx(tx *sql.Tx, id string) error
 	AddUserToOrganisationWithTx(tx *sql.Tx, userId string, groupId string) error
@@ -51,9 +51,7 @@ type CoreRepository interface {
 	InvitationSignup(invitationId string, email string, password string, name string) error
 	DeleteUser(userId string) error
 	DeleteUserWithTx(tx *sql.Tx, userId string) error
-	RemoveUserFromOrganisation(userId string, organisationId string) error
 	RemoveUserFromOrganisationWithTx(tx *sql.Tx, userId string, organisationId string) error
-	CreateOrganisation(name string, userId string) error
 	CreateOrganisationWithTx(tx *sql.Tx, name string, userId string) error
 }
 
@@ -272,15 +270,13 @@ func (repository *CoreRepositoryImpl) Signup(userId string, name string) error {
 func (repository *CoreRepositoryImpl) ReadUserByEmail(email string) (*types.User, error) {
 	stmt, err := repository.client.Prepare("SELECT id, email FROM user WHERE email = ?")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}
 	defer stmt.Close()
-
 	var user types.User
 	if err := stmt.QueryRow(email).Scan(&user.Id, &user.Email); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", types.ErrNotFound, err)
 	}
-
 	return &user, nil
 }
 
@@ -547,10 +543,10 @@ func (repository *CoreRepositoryImpl) ReadGroup(ctx context.Context, groupId str
 }
 
 // Looks up an invitation, ensuring the invitationId is intended for the email.
-func (repository *CoreRepositoryImpl) LookupInvitation(invitationId string) (string, string, error) {
+func (repository *CoreRepositoryImpl) LookupInvitation(invitationId string) (string, string, string, error) {
 	stmt, err := repository.client.Prepare("SELECT * FROM invitation WHERE id = ?")
 	if err != nil {
-		return "", "", types.ErrPrepareStatement
+		return "", "", "", types.ErrPrepareStatement
 	}
 	defer stmt.Close()
 	var inv struct {
@@ -561,11 +557,11 @@ func (repository *CoreRepositoryImpl) LookupInvitation(invitationId string) (str
 	}
 	if err := stmt.QueryRow(invitationId).Scan(&inv.id, &inv.userId, &inv.email, &inv.orgId); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", "", types.ErrInvitationNotFound
+			return "", "", "", types.ErrInvitationNotFound
 		}
-		return "", "", types.ErrGenericSQL
+		return "", "", "", types.ErrGenericSQL
 	}
-	return inv.userId, inv.orgId, nil
+	return inv.userId, inv.orgId, inv.email, nil
 }
 
 // Delete an invitation.
@@ -580,12 +576,12 @@ func (repository *CoreRepositoryImpl) DeleteInvitationWithTx(tx *sql.Tx, id stri
 	}
 	stmt, err := c.Prepare("DELETE FROM invitation WHERE id = ?")
 	if err != nil {
-		return types.ErrPrepareStatement
+		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}
 	defer stmt.Close()
 	_, err = stmt.Exec(id)
 	if err != nil {
-		return types.ErrGenericSQL
+		return fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 	}
 	return nil
 }
@@ -610,6 +606,7 @@ func (repository *CoreRepositoryImpl) AddUserToOrganisation(userId string, organ
 	return repository.AddUserToOrganisationWithTx(nil, userId, organisationId)
 }
 
+// This should probably be deleted, as the transaction flows has generally been moved to the api layer. (already implemented in invite/join)
 func (repository *CoreRepositoryImpl) InvitationSignup(invitationId string, email string, password string, name string) error {
 
 	var userId string
@@ -637,7 +634,7 @@ func (repository *CoreRepositoryImpl) InvitationSignup(invitationId string, emai
 	}()
 
 	// check for invitation
-	userId, organisationId, err := repository.LookupInvitation(invitationId)
+	userId, organisationId, _, err := repository.LookupInvitation(invitationId)
 	if err != nil {
 		return err
 	}
@@ -704,98 +701,74 @@ func (repository *CoreRepositoryImpl) DeleteUserWithTx(tx *sql.Tx, userId string
 	return nil
 }
 
-// Non-tx method for removing a user from an organisation.
-func (repository *CoreRepositoryImpl) RemoveUserFromOrganisation(userId string, organisationId string) error {
-	return repository.RemoveUserFromOrganisationWithTx(nil, userId, organisationId)
-}
-
-// Remove a user from an organisation, if user has no organisation left after removal, create a default one.
+// Remove a user from a group, if user has no group left after removal, create a default one.
 func (repository *CoreRepositoryImpl) RemoveUserFromOrganisationWithTx(tx *sql.Tx, userId string, organisationId string) error {
 
-	var c types.Execer = repository.client
-	if tx != nil {
-		c = tx
-	}
-
-	// delete from org
-	stmt1, err := c.Prepare("DELETE FROM organisation_user WHERE userId = ? AND organisationId = ?")
+	// delete from group
+	stmt1, err := tx.Prepare("DELETE FROM organisation_user WHERE userId = ? AND organisationId = ?")
 	if err != nil {
-		return types.ErrPrepareStatement
+		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}
 	defer stmt1.Close()
 	result, err := stmt1.Exec(userId, organisationId)
 	if err != nil {
-		return types.ErrGenericSQL
+		return fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 	}
 
 	// check if the mapping actually did exist, if not, return with not found
 	count, err := result.RowsAffected()
 	if err != nil {
-		return types.ErrGenericSQL
+		log.Printf("error checking rows affected: %+v\n", err)
+		return fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 	}
 	if count == 0 {
-		return types.ErrNotFound
+		return fmt.Errorf("%w: %v", types.ErrNotFound, err)
 	}
 
-	// if the mapping didn't exist at all, return here. allows for 404 response
-
-	// check if user is associated with atleast one organisation, if not, create a default
-	stmt2, err := c.Prepare("CALL GetUserOrganisations(?)")
+	// check if user is associated with atleast one group, if not, create a default
+	stmt2, err := tx.Prepare("CALL GetUserOrganisations(?)")
 	if err != nil {
-		return types.ErrPrepareStatement
+		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}
 	defer stmt2.Close()
 	rows, err := stmt2.Query(userId)
 	if err != nil {
-		return types.ErrGenericSQL
+		log.Printf("error reading user groups: %+v\n", err)
+		return fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 	}
 	defer rows.Close()
 
-	// otherwise create a default organisation for the user
+	// otherwise create a default group for the user
 	if !rows.Next() {
-		_tx, ok := c.(*sql.Tx)
-		if !ok {
-			return err
-		}
-		if err = repository.CreateOrganisationWithTx(_tx, "My organisation", userId); err != nil {
+		rows.Close()
+		if err = repository.CreateOrganisationWithTx(tx, "My organisation", userId); err != nil {
 			return err
 		}
 	}
-
 	return nil
-}
-
-func (repository *CoreRepositoryImpl) CreateOrganisation(name string, userId string) error {
-	return repository.CreateOrganisationWithTx(nil, name, userId)
 }
 
 func (repository *CoreRepositoryImpl) CreateOrganisationWithTx(tx *sql.Tx, name string, userId string) error {
 
-	var c types.Execer = repository.client
-	if tx != nil {
-		c = tx
-	}
-
 	// create organisation
-	stmt1, err := c.Prepare("INSERT INTO organisation (id, name) VALUES (?, ?)")
+	stmt1, err := tx.Prepare("INSERT INTO organisation (id, name) VALUES (?, ?)")
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: error creating group: %v", types.ErrGenericSQL, err)
 	}
 	defer stmt1.Close()
 	organisationId := uuid.NewString()
-	if _, err = stmt1.Exec(organisationId, name); err != nil {
-		return err
+	if _, err := stmt1.Exec(organisationId, name); err != nil {
+		return fmt.Errorf("%w: error inserting into organisation: %v", types.ErrGenericSQL, err)
 	}
 
 	// map user to organisation
-	stmt2, err := c.Prepare("INSERT INTO organisation_user (id, organisationId, userId) VALUES (?, ?, ?)")
+	stmt2, err := tx.Prepare("INSERT INTO organisation_user (id, organisationId, userId) VALUES (?, ?, ?)")
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}
 	defer stmt2.Close()
 	if _, err = stmt2.Exec(uuid.NewString(), organisationId, userId); err != nil {
-		return err
+		return fmt.Errorf("%w: error inserting into organisation_user: %v", types.ErrGenericSQL, err)
 	}
-
 	return nil
 }
