@@ -45,6 +45,9 @@ func NewGroupHandler(opts *GroupHandlerOpts) *GroupHandlerImpl {
 }
 
 func (handler *GroupHandlerImpl) RegisterRoutes(router *gin.Engine) {
+
+	// steamline endpoints, so :groupId is present in the path were relevant / expected ..
+
 	router.POST("/api/group/create", handler.createOrganisation)
 	router.GET("/api/group/list", handler.organisationList)
 	router.GET("/api/group/:id", handler.getGroup)
@@ -135,13 +138,30 @@ func (handler *GroupHandlerImpl) deleteGroup(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+func (handler *GroupHandlerImpl) createRole(c *gin.Context) {
+	ctx := c.Request.Context()
+
+
+	var body struct {
+		RoleName string `json:"roleName" binding:"required"`
+
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest)
+	}
+
+}
+
 func (handler *GroupHandlerImpl) getRoles(c *gin.Context) {
 
-	orgId := c.Param("id")
-	if orgId == "" {
-		c.String(http.StatusBadRequest, "no id")
+	groupId := c.Param("id")
+	if groupId == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no id"})
 		return
 	}
+
+	// read defined roles
+	// read roles for each
 
 	// query db for
 	// 1. defined roles for the org
@@ -270,7 +290,13 @@ func (handler *GroupHandlerImpl) inviteMember(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error creating invitation"})
 		return
 	}
-	link := fmt.Sprintf("%s/api/group/join?inv=%s", handler.domain, invitationId)
+
+	var link string
+	if userId == "" {
+		link = fmt.Sprintf("%s/signup?inv=%s", handler.portal_domain, invitationId)
+	} else {
+		link = fmt.Sprintf("%s/api/group/join?inv=%s", handler.domain, invitationId)
+	}
 
 	// if no user was found, send an signin invitation flow
 	// else send a simple accept / reject invitation flow
@@ -324,20 +350,16 @@ func (handler *GroupHandlerImpl) joinGroup(c *gin.Context) {
 		}
 	}
 
+	// bind to user only known (registered in our system) after the invitation was sent
+	if userId == "" {
+		userId = user.Id
+	}
+
 	// create transaction
 	tx, err := handler.core.NewTransaction(ctx)
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
 		return
-	}
-
-	// decide what type of user is invited, either an existing user or non-existing user
-	var redirect_link string
-	if userId == "" {
-		userId = user.Id
-		redirect_link = fmt.Sprintf("%s/signup?inv=%s", handler.portal_domain, invitationId)
-	} else {
-		redirect_link = fmt.Sprintf("%s/invited", handler.portal_domain)
 	}
 
 	// add user to group
@@ -360,9 +382,8 @@ func (handler *GroupHandlerImpl) joinGroup(c *gin.Context) {
 
 	// redirect to an error page if things went wrong -> the user should not experience an 'error' http blank page thing..
 
-	// redirects to /invited if the user already is a user in the system
-	// otherwise to /signup?inv=xxx, so the user can sign up and instantly be associated with the group
-	c.Redirect(http.StatusPermanentRedirect, redirect_link)
+	// indicate to the user that things went well, by redirecting to a success page
+	c.Redirect(http.StatusPermanentRedirect, fmt.Sprintf("%s/invited", handler.portal_domain))
 }
 
 func (handler *GroupHandlerImpl) rejectGroup(c *gin.Context) {
@@ -385,15 +406,17 @@ func (handler *GroupHandlerImpl) rejectGroup(c *gin.Context) {
 }
 
 func (handler *GroupHandlerImpl) removeMember(c *gin.Context) {
+	ctx := c.Request.Context()
 	var body struct {
 		UserId  string `json:"userId" binding:"required"`
 		GroupId string `json:"groupId" binding:"required"`
+		Name    string `json:"name" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	tx, err := handler.core.NewTransaction(c.Request.Context())
+	tx, err := handler.core.NewTransaction(ctx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
@@ -417,5 +440,18 @@ func (handler *GroupHandlerImpl) removeMember(c *gin.Context) {
 			return
 		}
 	}
+
+	// read user's email, to send a notification
+	user, err := handler.core.ReadUserById(body.UserId)
+	if err != nil {
+		log.Printf("error reading user by id: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, "error reading user email")
+		return
+	}
+	if err := handler.email.Send([]string{user.Email}, handler.email.CreateRemovedFromGroup(user.Email, body.Name)); err != nil {
+		c.JSON(http.StatusInternalServerError, "error sending email")
+		return
+	}
+
 	c.Status(http.StatusOK)
 }

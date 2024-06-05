@@ -12,6 +12,7 @@ type EmailService interface {
 	CreateSignupAndInvitationMail(to string, group string, link string) string
 	CreateSignupVerification(to string, link string) string
 	CreateResetPassword(to string, link string) string
+	CreateRemovedFromGroup(to string, group string) string
 }
 
 type EmailServiceOpts struct{}
@@ -63,5 +64,12 @@ func (service *EmailServiceImpl) CreateSignupVerification(to string, link string
 func (service *EmailServiceImpl) CreateResetPassword(to string, link string) string {
 	mailHeader := fmt.Sprintf("From:%s\nTo:%s\nSubject: Reset password link \n\n", service.email, to)
 	mailBody := fmt.Sprintf("Hello, follow this link to reset your password.\n\n%s", link)
+	return mailHeader + mailBody
+}
+
+// Create a removed from group email notification.
+func (service *EmailServiceImpl) CreateRemovedFromGroup(to string, group string) string {
+	mailHeader := fmt.Sprintf("From:%s\nTo:%s\nSubject: Removed from group\n\n", service.email, to)
+	mailBody := fmt.Sprintf("Hello\n\n, This is a message to notify you, that you've been removed from the group\t%s\n\n", group)
 	return mailHeader + mailBody
 }

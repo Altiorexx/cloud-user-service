@@ -22,6 +22,7 @@ import (
 type CoreRepository interface {
 	NewTransaction(ctx context.Context) (*sql.Tx, error)
 	CommitTransaction(tx *sql.Tx) error
+	ReadUserById(userId string) (*types.User, error)
 	UpdateGroupName(groupId string, name string) error
 	UpdateGroupNameWithTx(tx *sql.Tx, groupId string, name string) error
 	DeleteGroup(groupId string) error
@@ -144,6 +145,20 @@ func (repository *CoreRepositoryImpl) CommitTransaction(tx *sql.Tx) error {
 		return fmt.Errorf("%w: %v", types.ErrTxCommit, err)
 	}
 	return nil
+}
+
+func (repository *CoreRepositoryImpl) ReadUserById(userId string) (*types.User, error) {
+	stmt, err := repository.client.Prepare("SELECT * FROM user WHERE id = ? LIMIT 1")
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
+	}
+	defer stmt.Close()
+
+	var user types.User
+	if err := stmt.QueryRow(userId).Scan(&user.Id, &user.Name, &user.Email, &user.Password, &user.LastLogin, &user.Verified); err != nil {
+		return nil, fmt.Errorf("error scanning data into variable: %v", err)
+	}
+	return &user, nil
 }
 
 // Updates the group's name.
