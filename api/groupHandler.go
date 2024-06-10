@@ -20,12 +20,14 @@ type GroupHandler interface {
 
 type GroupHandlerOpts struct {
 	Core     repository.CoreRepository
+	Role     repository.RoleRepository
 	Firebase service.FirebaseService
 	Email    service.EmailService
 }
 
 type GroupHandlerImpl struct {
 	core          repository.CoreRepository
+	role          repository.RoleRepository
 	case_         *service.CaseService
 	email         service.EmailService
 	firebase      service.FirebaseService
@@ -58,8 +60,12 @@ func (handler *GroupHandlerImpl) RegisterRoutes(router *gin.Engine) {
 	router.GET("/api/group/join", handler.joinGroup)
 	router.DELETE("/api/group/member/remove", handler.removeMember)
 
-	router.GET("/api/group/reject", handler.rejectGroup)
+	router.POST("/api/group/:id/role/create", handler.createRole)
+	router.GET("/api/group/:id/roles")
+	router.POST("/api/group/:id/role/update")
+	router.DELETE("/api/group/:id/role/delete")
 
+	router.GET("/api/group/reject", handler.rejectGroup)
 	router.GET("/api/organisation/:id/roles", handler.getRoles)
 }
 
@@ -138,18 +144,36 @@ func (handler *GroupHandlerImpl) deleteGroup(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+// Create a role for the group.
 func (handler *GroupHandlerImpl) createRole(c *gin.Context) {
 	ctx := c.Request.Context()
-
-
-	var body struct {
-		RoleName string `json:"roleName" binding:"required"`
-
-	}
+	var body *types.Role
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, nil)
+	}
+	tx, err := handler.core.NewTransaction(ctx)
+	if err != nil {
+		log.Printf("error creating transaction: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+	}
+	if err := handler.role.CreateRole(tx, body); err != nil {
+		log.Printf("error creating role: %+v\n", err)
+		switch {
+		case errors.Is(err, types.ErrGenericSQL):
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
 	}
 
+	if err := handler.core.CommitTransaction(tx); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	c.Status(http.StatusOK)
 }
 
 func (handler *GroupHandlerImpl) getRoles(c *gin.Context) {

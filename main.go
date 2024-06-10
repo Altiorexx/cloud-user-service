@@ -47,6 +47,9 @@ func InitApp() *App {
 					}, "1"),
 				}),
 				api.NewGroupHandler(&api.GroupHandlerOpts{
+					Role: repository.NewRoleRepository(&repository.RoleRepositoryOpts{
+						Key: "1",
+					}),
 					Core: repository.NewCoreRepository(&repository.CoreRepositoryOpts{
 						Firebase: service.NewFirebaseService(&service.FirebaseServiceOpts{
 							Email: service.NewEmailService(),

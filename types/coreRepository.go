@@ -1,6 +1,8 @@
 package types
 
-import "database/sql"
+import (
+	"database/sql"
+)
 
 type Service struct {
 	Id                  string `json:"id"`
