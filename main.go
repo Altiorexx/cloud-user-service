@@ -20,6 +20,9 @@ func InitApp() *App {
 			Handlers: []types.Handler{
 				api.NewMiddlewareHandler(&api.MiddlewareHandlerOpts{
 					Core: repository.NewCoreRepository(&repository.CoreRepositoryOpts{
+						Role: repository.NewRoleRepository(&repository.RoleRepositoryOpts{
+							Key: "1",
+						}),
 						Firebase: service.NewFirebaseService(&service.FirebaseServiceOpts{
 							Email: service.NewEmailService(),
 						}, "1"),
@@ -30,6 +33,9 @@ func InitApp() *App {
 				}),
 				api.NewUserHandler(&api.UserHandlerOpts{
 					Core: repository.NewCoreRepository(&repository.CoreRepositoryOpts{
+						Role: repository.NewRoleRepository(&repository.RoleRepositoryOpts{
+							Key: "1",
+						}),
 						Firebase: service.NewFirebaseService(&service.FirebaseServiceOpts{
 							Email: service.NewEmailService(),
 						}, "1"),
@@ -41,6 +47,9 @@ func InitApp() *App {
 				}),
 				api.NewServiceHandler(&api.ServiceHandlerOpts{
 					Core: repository.NewCoreRepository(&repository.CoreRepositoryOpts{
+						Role: repository.NewRoleRepository(&repository.RoleRepositoryOpts{
+							Key: "1",
+						}),
 						Firebase: service.NewFirebaseService(&service.FirebaseServiceOpts{
 							Email: service.NewEmailService(),
 						}, "1"),
@@ -51,6 +60,9 @@ func InitApp() *App {
 						Key: "1",
 					}),
 					Core: repository.NewCoreRepository(&repository.CoreRepositoryOpts{
+						Role: repository.NewRoleRepository(&repository.RoleRepositoryOpts{
+							Key: "1",
+						}),
 						Firebase: service.NewFirebaseService(&service.FirebaseServiceOpts{
 							Email: service.NewEmailService(),
 						}, "1"),
@@ -62,6 +74,9 @@ func InitApp() *App {
 				}),
 				api.NewTokenHandler(&api.TokenHandlerOpts{
 					Core: repository.NewCoreRepository(&repository.CoreRepositoryOpts{
+						Role: repository.NewRoleRepository(&repository.RoleRepositoryOpts{
+							Key: "1",
+						}),
 						Firebase: service.NewFirebaseService(&service.FirebaseServiceOpts{
 							Email: service.NewEmailService(),
 						}, "1"),

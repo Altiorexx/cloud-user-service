@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/mail"
 	"os"
+	"runtime/debug"
 
 	"github.com/gin-gonic/gin"
 	"user.service.altiore.io/repository"
@@ -38,6 +39,7 @@ type GroupHandlerImpl struct {
 func NewGroupHandler(opts *GroupHandlerOpts) *GroupHandlerImpl {
 	return &GroupHandlerImpl{
 		core:          opts.Core,
+		role:          opts.Role,
 		firebase:      opts.Firebase,
 		case_:         service.NewCaseService(),
 		email:         opts.Email,
@@ -60,13 +62,102 @@ func (handler *GroupHandlerImpl) RegisterRoutes(router *gin.Engine) {
 	router.GET("/api/group/join", handler.joinGroup)
 	router.DELETE("/api/group/member/remove", handler.removeMember)
 
-	router.POST("/api/group/:id/role/create", handler.createRole)
-	router.GET("/api/group/:id/roles")
-	router.POST("/api/group/:id/role/update")
-	router.DELETE("/api/group/:id/role/delete")
+	router.GET("/api/group/:id/role/defined_roles", handler.getDefinedRoles)
+	router.POST("/api/group/:id/role/update", handler.updateRoles)
+	router.POST("/api/group/:id/role/delete", handler.deleteRole)
+
+	router.GET("/api/group/:id/role/member_roles", handler.getMemberRoles)
 
 	router.GET("/api/group/reject", handler.rejectGroup)
-	router.GET("/api/organisation/:id/roles", handler.getRoles)
+}
+
+func (handler *GroupHandlerImpl) getMemberRoles(c *gin.Context) {
+	_ = c.Request.Context()
+	groupId := c.Param("id")
+	member_roles, err := handler.role.GetMembersWithRoles(groupId)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, member_roles)
+}
+
+func (handler *GroupHandlerImpl) getDefinedRoles(c *gin.Context) {
+	groupId := c.Param("id")
+	if groupId == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no group id"})
+		return
+	}
+	roles, err := handler.role.ReadRoles(groupId)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if len(roles) == 0 {
+		roles = make([]*types.Role, 0)
+	}
+	c.JSON(http.StatusOK, roles)
+}
+
+// Update the roles for a group.
+func (handler *GroupHandlerImpl) updateRoles(c *gin.Context) {
+	ctx := c.Request.Context()
+	groupId := c.Param("id")
+	var body []*types.Role
+	if err := c.ShouldBindJSON(&body); err != nil {
+		log.Printf("error parsing body: %+v\n", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	tx, err := handler.core.NewTransaction(ctx)
+	if err != nil {
+		log.Printf("error creating transaction: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	if err := handler.role.UpdateRoles(tx, body, groupId); err != nil {
+		log.Printf("error creating role: %+v\n", err)
+		switch {
+		case errors.Is(err, types.ErrGenericSQL):
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
+	}
+	if err := handler.core.CommitTransaction(tx); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+func (handler *GroupHandlerImpl) deleteRole(c *gin.Context) {
+	ctx := c.Request.Context()
+	var body struct {
+		RoleId string `json:"roleId" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
+		return
+	}
+	tx, err := handler.core.NewTransaction(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := handler.role.DeleteRole(tx, body.RoleId); err != nil {
+		log.Printf("error deleting role: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	if err := handler.core.CommitTransaction(tx); err != nil {
+		log.Printf("error commiting role deletion: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	c.Status(http.StatusOK)
 }
 
 // Gets a group's metadata.
@@ -144,56 +235,6 @@ func (handler *GroupHandlerImpl) deleteGroup(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// Create a role for the group.
-func (handler *GroupHandlerImpl) createRole(c *gin.Context) {
-	ctx := c.Request.Context()
-	var body *types.Role
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, nil)
-	}
-	tx, err := handler.core.NewTransaction(ctx)
-	if err != nil {
-		log.Printf("error creating transaction: %+v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-	}
-	if err := handler.role.CreateRole(tx, body); err != nil {
-		log.Printf("error creating role: %+v\n", err)
-		switch {
-		case errors.Is(err, types.ErrGenericSQL):
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		}
-	}
-
-	if err := handler.core.CommitTransaction(tx); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		return
-	}
-
-	c.Status(http.StatusOK)
-}
-
-func (handler *GroupHandlerImpl) getRoles(c *gin.Context) {
-
-	groupId := c.Param("id")
-	if groupId == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no id"})
-		return
-	}
-
-	// read defined roles
-	// read roles for each
-
-	// query db for
-	// 1. defined roles for the org
-	// 2. roles given for each individual user in the org
-
-	c.Status(http.StatusOK)
-}
-
 // Create a group and adds the requesting user to it.
 func (handler *GroupHandlerImpl) createOrganisation(c *gin.Context) {
 
@@ -217,7 +258,7 @@ func (handler *GroupHandlerImpl) createOrganisation(c *gin.Context) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("(create group) error on commit: %+v\n", err)
+			log.Printf("(create group) error on commit: %+v, %s\n", r, string(debug.Stack()))
 			if err := tx.Rollback(); err != nil {
 				log.Printf("(create group) error on rollback: %+v\n", err)
 			}

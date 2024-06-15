@@ -58,6 +58,7 @@ type CoreRepository interface {
 
 type CoreRepositoryOpts struct {
 	Firebase service.FirebaseService
+	Role     RoleRepository
 }
 
 var (
@@ -68,6 +69,7 @@ var (
 type CoreRepositoryImpl struct {
 	client   *sql.DB
 	firebase service.FirebaseService
+	role     RoleRepository
 }
 
 func NewCoreRepository(opts *CoreRepositoryOpts, key string) *CoreRepositoryImpl {
@@ -118,9 +120,12 @@ func NewCoreRepository(opts *CoreRepositoryOpts, key string) *CoreRepositoryImpl
 
 	log.Println("connected to core database.")
 
+	log.Printf("core opts: %+v/n", opts)
+
 	core_repository_instance_map[key] = &CoreRepositoryImpl{
 		client:   db,
 		firebase: opts.Firebase,
+		role:     opts.Role,
 	}
 	return core_repository_instance_map[key]
 }
@@ -784,6 +789,12 @@ func (repository *CoreRepositoryImpl) CreateOrganisationWithTx(tx *sql.Tx, name 
 	defer stmt2.Close()
 	if _, err = stmt2.Exec(uuid.NewString(), organisationId, userId); err != nil {
 		return fmt.Errorf("%w: error inserting into organisation_user: %v", types.ErrGenericSQL, err)
+	}
+
+	// create group owner role for the group
+	if err := repository.role.CreateGroupOwnerRole(tx, organisationId, userId); err != nil {
+		log.Printf("create owner role error: %+v\n", err)
+		return fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 	}
 	return nil
 }
