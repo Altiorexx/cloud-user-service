@@ -1,9 +1,9 @@
 package types
 
 type MemberRole struct {
-	Id     string  `json:"id"`
-	Member string  `json:"member"`
-	Roles  []*Role `json:"roles"`
+	Id     string  `json:"id" binding:"required"`
+	Member string  `json:"member" binding:"required"`
+	Roles  []*Role `json:"roles" binding:"required"`
 }
 
 type Role struct {

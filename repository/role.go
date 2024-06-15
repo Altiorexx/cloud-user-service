@@ -22,6 +22,9 @@ type RoleRepository interface {
 	DeleteRole(tx *sql.Tx, roleId string) error
 	CreateGroupOwnerRole(tx *sql.Tx, groupId string, userId string) error
 	GetMembersWithRoles(groupId string) ([]*types.MemberRole, error)
+
+	AddMemberRole(tx *sql.Tx, userId string, roleId string) error
+	RemoveMemberRole(tx *sql.Tx, userId string, roleId string) error
 }
 
 type RoleRepositoryOpts struct {
@@ -88,6 +91,63 @@ func NewRoleRepository(opts *RoleRepositoryOpts) *RoleRepositoryImpl {
 	return role_repository_instance_map[opts.Key]
 }
 
+// Remove a role from the specified user, by deleting the user_role mapping.
+func (repository *RoleRepositoryImpl) RemoveMemberRole(tx *sql.Tx, userId string, roleId string) error {
+
+	// check if the role being removed is "Group Owner"
+	checkRoleStmt, err := tx.Prepare("SELECT name FROM role WHERE id = ?")
+	if err != nil {
+		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
+	}
+	defer checkRoleStmt.Close()
+	var roleName string
+	if err := checkRoleStmt.QueryRow(roleId).Scan(&roleName); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("role with id %s not found", roleId)
+		}
+		return fmt.Errorf("failed to execute query: %v", err)
+	}
+
+	if roleName == "Group Owner" {
+		// check how many users have the "Group Owner" role
+		checkMembersStmt, err := tx.Prepare("SELECT COUNT(*) FROM user_role WHERE roleId = ?")
+		if err != nil {
+			return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
+		}
+		defer checkMembersStmt.Close()
+		var count int
+		if err := checkMembersStmt.QueryRow(roleId).Scan(&count); err != nil {
+			return fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
+		}
+		if count <= 1 {
+			return fmt.Errorf("%w: cannot remove the last Group Owner role from the group", types.ErrForbiddenOperation)
+		}
+	}
+
+	stmt, err := tx.Prepare("DELETE FROM user_role WHERE userId = ? AND roleId = ?")
+	if err != nil {
+		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
+	}
+	defer stmt.Close()
+	if _, err := stmt.Exec(userId, roleId); err != nil {
+		return fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
+	}
+	return nil
+}
+
+// Add a role to the specified user, by mapping role to user.
+func (repository *RoleRepositoryImpl) AddMemberRole(tx *sql.Tx, userId string, roleId string) error {
+	stmt, err := tx.Prepare("INSERT INTO user_role VALUES (?, ? ,?)")
+	if err != nil {
+		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
+	}
+	defer stmt.Close()
+	if _, err := stmt.Exec(uuid.NewString(), userId, roleId); err != nil {
+		return fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
+	}
+	return nil
+}
+
 func (repository *RoleRepositoryImpl) GetMembersWithRoles(groupId string) ([]*types.MemberRole, error) {
 	query := "SELECT u.id AS user_id, u.name AS user_name, r.id AS role_id, r.name AS role_name " +
 		"FROM user u " +
@@ -146,7 +206,7 @@ func (repository *RoleRepositoryImpl) CreateGroupOwnerRole(tx *sql.Tx, groupId s
 	_, err = createRoleStmt.Exec(roleId, "Group Owner", groupId, true, true, true, true, true, true, true, true, true, true)
 	if err != nil {
 		log.Printf("error creating group owner role: %+v\n", err)
-		return err
+		return fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 	}
 
 	// map role to user
@@ -193,6 +253,16 @@ func (repository *RoleRepositoryImpl) ReadRoles(groupId string) ([]*types.Role, 
 }
 
 func (repository *RoleRepositoryImpl) DeleteRole(tx *sql.Tx, roleId string) error {
+	// delete all user_role mappings
+	user_role_stmt, err := tx.Prepare("DELETE FROM user_role WHERE roleId = ?")
+	if err != nil {
+		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
+	}
+	defer user_role_stmt.Close()
+	if _, err := user_role_stmt.Exec(roleId); err != nil {
+		return fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
+	}
+	// delete role
 	stmt, err := tx.Prepare("DELETE FROM role WHERE id = ?")
 	if err != nil {
 		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)

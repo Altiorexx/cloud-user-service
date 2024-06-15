@@ -14,6 +14,8 @@ var (
 	ErrPrepareStatement = errors.New("error preparing statement")
 	ErrNotFound         = errors.New("not found")
 
+	ErrForbiddenOperation = errors.New("forbidden operation")
+
 	ErrTxCancelled = errors.New("transaction was cancelled")
 
 	ErrInvitationNotFound = errors.New("invitation not found")

@@ -796,5 +796,6 @@ func (repository *CoreRepositoryImpl) CreateOrganisationWithTx(tx *sql.Tx, name 
 		log.Printf("create owner role error: %+v\n", err)
 		return fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 	}
+
 	return nil
 }

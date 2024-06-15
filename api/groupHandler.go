@@ -65,10 +65,81 @@ func (handler *GroupHandlerImpl) RegisterRoutes(router *gin.Engine) {
 	router.GET("/api/group/:id/role/defined_roles", handler.getDefinedRoles)
 	router.POST("/api/group/:id/role/update", handler.updateRoles)
 	router.POST("/api/group/:id/role/delete", handler.deleteRole)
-
 	router.GET("/api/group/:id/role/member_roles", handler.getMemberRoles)
 
+	router.POST("/api/group/:id/member/add_role", handler.addMemberRole)
+	router.POST("/api/group/:id/member/remove_role", handler.removeMemberRole)
+
 	router.GET("/api/group/reject", handler.rejectGroup)
+}
+
+// Add role to group member.
+func (handler *GroupHandlerImpl) addMemberRole(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var body struct {
+		UserId string `json:"userId" binding:"required"`
+		RoleId string `json:"roleId" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	tx, err := handler.core.NewTransaction(ctx)
+	if err != nil {
+		log.Printf("error creating transaction: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	if err := handler.role.AddMemberRole(tx, body.UserId, body.RoleId); err != nil {
+		log.Printf("error mapping role to user: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	if err := handler.core.CommitTransaction(tx); err != nil {
+		log.Printf("error committing transaction: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+func (handler *GroupHandlerImpl) removeMemberRole(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var body struct {
+		UserId string `json:"userId" binding:"required"`
+		RoleId string `json:"roleId" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	tx, err := handler.core.NewTransaction(ctx)
+	if err != nil {
+		log.Printf("error creating transaction: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	if err := handler.role.RemoveMemberRole(tx, body.UserId, body.RoleId); err != nil {
+		log.Printf("error removing user role mapping: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	if err := handler.core.CommitTransaction(tx); err != nil {
+		log.Printf("error committing transaction: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	c.Status(http.StatusOK)
 }
 
 func (handler *GroupHandlerImpl) getMemberRoles(c *gin.Context) {
@@ -76,7 +147,8 @@ func (handler *GroupHandlerImpl) getMemberRoles(c *gin.Context) {
 	groupId := c.Param("id")
 	member_roles, err := handler.role.GetMembersWithRoles(groupId)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("error getting member roles: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
 	c.JSON(http.StatusOK, member_roles)
@@ -242,10 +314,6 @@ func (handler *GroupHandlerImpl) createOrganisation(c *gin.Context) {
 		Name string `json:"name" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.String(http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := types.Validate.Struct(body); err != nil {
 		c.String(http.StatusBadRequest, err.Error())
 		return
 	}
