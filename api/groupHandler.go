@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/mail"
 	"os"
-	"runtime/debug"
 
 	"github.com/gin-gonic/gin"
 	"user.service.altiore.io/repository"
@@ -157,32 +156,16 @@ func (handler *GroupHandlerImpl) getDefinedRoles(c *gin.Context) {
 
 // Update the roles for a group.
 func (handler *GroupHandlerImpl) updateRoles(c *gin.Context) {
-	ctx := c.Request.Context()
-	groupId := c.Param("id")
 	var body []*types.Role
 	if err := c.ShouldBindJSON(&body); err != nil {
-		log.Printf("error parsing body: %+v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	tx, err := handler.core.NewTransaction(ctx)
+	err := handler.core.WithTransaction(c.Request.Context(), func(tx *sql.Tx) error {
+		return handler.role.UpdateRolesWithTx(tx, body, c.Param("id"))
+	})
 	if err != nil {
-		log.Printf("error creating transaction: %+v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		return
-	}
-	if err := handler.role.UpdateRoles(tx, body, groupId); err != nil {
-		log.Printf("error creating role: %+v\n", err)
-		switch {
-		case errors.Is(err, types.ErrGenericSQL):
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		}
-	}
-	if err := handler.core.CommitTransaction(tx); err != nil {
+		log.Printf("error updating roles: %+v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -190,26 +173,18 @@ func (handler *GroupHandlerImpl) updateRoles(c *gin.Context) {
 }
 
 func (handler *GroupHandlerImpl) deleteRole(c *gin.Context) {
-	ctx := c.Request.Context()
 	var body struct {
 		RoleId string `json:"roleId" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	tx, err := handler.core.NewTransaction(ctx)
+	err := handler.core.WithTransaction(c.Request.Context(), func(tx *sql.Tx) error {
+		return handler.role.DeleteRoleWithTx(tx, body.RoleId)
+	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if err := handler.role.DeleteRole(tx, body.RoleId); err != nil {
-		log.Printf("error deleting role: %+v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		return
-	}
-	if err := handler.core.CommitTransaction(tx); err != nil {
-		log.Printf("error commiting role deletion: %+v\n", err)
+		log.Printf("error deleting group role: %+v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -236,7 +211,6 @@ func (handler *GroupHandlerImpl) getGroup(c *gin.Context) {
 }
 
 func (handler *GroupHandlerImpl) updateMetadata(c *gin.Context) {
-	ctx := c.Request.Context()
 	groupId := c.Param("id")
 	var body struct {
 		Name string `json:"name"`
@@ -245,62 +219,30 @@ func (handler *GroupHandlerImpl) updateMetadata(c *gin.Context) {
 		c.String(http.StatusBadRequest, err.Error())
 		return
 	}
-
-	// start transactions
-	tx, err := handler.core.NewTransaction(ctx)
+	err := handler.core.WithTransaction(c.Request.Context(), func(tx *sql.Tx) error {
+		// update name if requested
+		if body.Name != "" {
+			if err := handler.core.UpdateGroupNameWithTx(tx, groupId, body.Name); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("failed to commit group metadata changes: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-
-	// update name if requested
-	if body.Name != "" {
-		if err := handler.core.UpdateGroupNameWithTx(tx, groupId, body.Name); err != nil {
-			c.String(http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-
-	// commit changes
-	// can be reduced to simple err check, but this is a good pattern!
-	if err := handler.core.CommitTransaction(tx); err != nil {
-		log.Printf("failed to commit group metadata changes: %+v\n", err)
-		switch {
-		case errors.Is(err, types.ErrTxCommit):
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		case errors.Is(err, types.ErrRollback):
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		}
-	}
-
 	c.Status(http.StatusOK)
 }
 
 // Delete a group and related data.
 func (handler *GroupHandlerImpl) deleteGroup(c *gin.Context) {
-	groupId := c.Param("id")
-	_userId, _ := c.Get("userId")
-	userId, ok := _userId.(string)
-	if !ok {
-		log.Printf("somehow context userId type assertion failed?!")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized client"})
-		return
-	}
-	tx, err := handler.core.NewTransaction(c.Request.Context())
+	err := handler.core.WithTransaction(c.Request.Context(), func(tx *sql.Tx) error {
+		return handler.core.DeleteGroupWithTx(tx, c.GetString("userId"), c.Param("id"))
+	})
 	if err != nil {
-		log.Printf("error starting transaction: %+v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		return
-	}
-	if err := handler.core.DeleteGroupWithTx(tx, userId, groupId); err != nil {
 		log.Printf("error deleting group: %+v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		return
-	}
-	if err := handler.core.CommitTransaction(tx); err != nil {
-		log.Printf("error comitting transaction: %+v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -309,7 +251,6 @@ func (handler *GroupHandlerImpl) deleteGroup(c *gin.Context) {
 
 // Create a group and adds the requesting user to it.
 func (handler *GroupHandlerImpl) createOrganisation(c *gin.Context) {
-
 	var body struct {
 		Name string `json:"name" binding:"required"`
 	}
@@ -317,85 +258,51 @@ func (handler *GroupHandlerImpl) createOrganisation(c *gin.Context) {
 		c.String(http.StatusBadRequest, err.Error())
 		return
 	}
-
-	// start transaction
-	tx, err := handler.core.NewTransaction(c.Request.Context())
+	err := handler.core.WithTransaction(c.Request.Context(), func(tx *sql.Tx) error {
+		return handler.core.CreateOrganisationWithTx(tx, body.Name, c.GetString("userId"))
+	})
 	if err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
+		log.Printf("error creating group: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("(create group) error on commit: %+v, %s\n", r, string(debug.Stack()))
-			if err := tx.Rollback(); err != nil {
-				log.Printf("(create group) error on rollback: %+v\n", err)
-			}
-		}
-	}()
-
-	// create org and add user to it
-	userId, _ := c.Get("userId")
-	if err := handler.core.CreateOrganisationWithTx(tx, body.Name, userId.(string)); err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// commit transaction
-	if err := tx.Commit(); err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
-		panic(err)
-	}
-
 	c.Status(http.StatusOK)
 }
 
 func (handler *GroupHandlerImpl) members(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.String(http.StatusBadRequest, "empty id path parameter")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no group id set"})
 		return
 	}
 	members, err := handler.core.ReadOrganisationMembers(id)
 	if err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
+		log.Printf("error reading group members: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
 	c.JSON(http.StatusOK, members)
 }
 
+// Get a list of groups the user is associated with.
 func (handler *GroupHandlerImpl) organisationList(c *gin.Context) {
-
-	// retrieve token
-	userId, exists := c.Get("userId")
-	if !exists {
-		c.Status(http.StatusForbidden)
-		return
-	}
-
-	// get organisations user is associated with
-	organisationList, err := handler.core.OrganisationList(userId.(string))
+	organisationList, err := handler.core.OrganisationList(c.GetString("userId"))
 	if err != nil {
+		log.Printf("error reading list of groups: %+v\n", err)
 		c.String(http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	// send response
 	c.JSON(http.StatusOK, organisationList)
 }
 
 func (handler *GroupHandlerImpl) inviteMember(c *gin.Context) {
 
-	// parse and validate body
 	var body struct {
 		Email   string `json:"email" binding:"required"`
 		GroupId string `json:"groupId" binding:"required"`
 		Name    string `json:"name" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.String(http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := types.Validate.Struct(body); err != nil {
 		c.String(http.StatusBadRequest, err.Error())
 		return
 	}
@@ -443,8 +350,6 @@ func (handler *GroupHandlerImpl) inviteMember(c *gin.Context) {
 		c.String(http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	// send response
 	c.Status(http.StatusOK)
 }
 
@@ -452,21 +357,21 @@ func (handler *GroupHandlerImpl) joinGroup(c *gin.Context) {
 	ctx := c.Request.Context()
 	invitationId := c.Query("inv")
 	if invitationId == "" {
-		c.String(http.StatusBadRequest, "no invitation id found")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no invitation id set"})
 		return
 	}
 
 	// lookup invitation
 	userId, groupId, email, err := handler.core.LookupInvitation(invitationId)
 	if err != nil {
+		log.Printf("error looking up invitation: %+v\n", err)
 		switch {
 		case errors.Is(err, types.ErrNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "no invitation found for the given invitationId"})
-			return
-		case errors.Is(err, types.ErrPrepareStatement):
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "error reading invitation"})
-			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "error looking up invitation"})
 		}
+		return
 	}
 
 	// if invitation was for a user, not yet registered and only the email were provided,
@@ -476,11 +381,10 @@ func (handler *GroupHandlerImpl) joinGroup(c *gin.Context) {
 		switch {
 		case errors.Is(err, types.ErrNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
-			return
-		case errors.Is(err, types.ErrPrepareStatement):
+		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "error reading user"})
-			return
 		}
+		return
 	}
 
 	// bind to user only known (registered in our system) after the invitation was sent
@@ -488,28 +392,23 @@ func (handler *GroupHandlerImpl) joinGroup(c *gin.Context) {
 		userId = user.Id
 	}
 
-	// create transaction
-	tx, err := handler.core.NewTransaction(ctx)
+	err = handler.core.WithTransaction(ctx, func(tx *sql.Tx) error {
+
+		// add user to group
+		if err := handler.core.AddUserToOrganisationWithTx(tx, userId, groupId); err != nil {
+			return err
+		}
+
+		// delete invitation
+		if err := handler.core.DeleteInvitationWithTx(tx, invitationId); err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
-		c.Status(http.StatusInternalServerError)
-		return
-	}
-
-	// add user to group
-	if err := handler.core.AddUserToOrganisationWithTx(tx, userId, groupId); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// delete invitation
-	if err := handler.core.DeleteInvitationWithTx(tx, invitationId); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// commit changes
-	if err := handler.core.CommitTransaction(tx); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("error: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
 
@@ -549,42 +448,30 @@ func (handler *GroupHandlerImpl) removeMember(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	tx, err := handler.core.NewTransaction(ctx)
+	err := handler.core.WithTransaction(ctx, func(tx *sql.Tx) error {
+		return handler.core.RemoveUserFromOrganisationWithTx(tx, body.UserId, body.GroupId)
+	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		return
-	}
-	if err := handler.core.RemoveUserFromOrganisationWithTx(tx, body.UserId, body.GroupId); err != nil {
 		log.Printf("error removing user from group: %+v\n", err)
 		switch err {
 		case types.ErrNotFound:
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
 		}
-	}
-	if err := handler.core.CommitTransaction(tx); err != nil {
-		log.Printf("error commiting transaction: %+v\n", err)
-		switch {
-		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		}
+		return
 	}
 
 	// read user's email, to send a notification
 	user, err := handler.core.ReadUserById(body.UserId)
 	if err != nil {
 		log.Printf("error reading user by id: %+v\n", err)
-		c.JSON(http.StatusInternalServerError, "error reading user email")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "error reading user email"})
 		return
 	}
 	if err := handler.email.Send([]string{user.Email}, handler.email.CreateRemovedFromGroup(user.Email, body.Name)); err != nil {
-		c.JSON(http.StatusInternalServerError, "error sending email")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "error sending email"})
 		return
 	}
-
 	c.Status(http.StatusOK)
 }

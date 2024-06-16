@@ -218,11 +218,11 @@ func (repository *CoreRepositoryImpl) UpdateGroupNameWithTx(tx *sql.Tx, groupId 
 	}
 	stmt, err := c.Prepare("UPDATE organisation SET name = ? WHERE id = ?")
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}
 	defer stmt.Close()
 	if _, err := stmt.Exec(name, groupId); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 	}
 	return nil
 }
@@ -482,73 +482,53 @@ func (repository *CoreRepositoryImpl) RegisterUsedServiceWithTx(tx *sql.Tx, serv
 
 // Read organisations for the user
 func (repository *CoreRepositoryImpl) OrganisationList(userId string) ([]*types.Organisation, error) {
-
-	// prepare query
 	stmt, err := repository.client.Prepare("CALL GetUserOrganisations(?)")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}
 	defer stmt.Close()
-
-	// execute query
 	rows, err := stmt.Query(userId)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 	}
 	defer rows.Close()
-
-	// parse the returned results
 	var organisations []*types.Organisation
 	for rows.Next() {
 		var org types.Organisation
 		if err := rows.Scan(&org.Id, &org.Name); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 		}
 		organisations = append(organisations, &org)
 	}
-
-	// check for other errors
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 	}
-
-	// return organisations
 	return organisations, nil
 }
 
 // Get all members associated with an organisation.
 func (repository *CoreRepositoryImpl) ReadOrganisationMembers(id string) ([]*types.OrganisationMember, error) {
-
-	// prepare query
 	stmt, err := repository.client.Prepare("CALL GetOrganisationMembers(?)")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}
 	defer stmt.Close()
-
-	// execute query
 	result, err := stmt.Query(id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 	}
 	defer result.Close()
-
-	// parse the returned results
 	var members []*types.OrganisationMember
 	for result.Next() {
 		var org types.OrganisationMember
 		if err := result.Scan(&org.Id, &org.Name); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 		}
 		members = append(members, &org)
 	}
-
-	// check for other errors
 	if err := result.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 	}
-
-	// return organisations
 	return members, nil
 }
 
@@ -558,12 +538,12 @@ func (repository *CoreRepositoryImpl) CreateInvitation(userId string, email stri
 	id := uuid.NewString()
 	stmt, err := repository.client.Prepare("INSERT INTO invitation (id, userId, email, organisationId) VALUES (?, ?, ?, ?)")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}
 	defer stmt.Close()
 	_, err = stmt.Exec(id, userId, email, groupId)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 	}
 	return id, nil
 }

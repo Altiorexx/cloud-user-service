@@ -18,12 +18,17 @@ import (
 
 type RoleRepository interface {
 	ReadRoles(groupId string) ([]*types.Role, error)
-	UpdateRoles(tx *sql.Tx, roles []*types.Role, groupId string) error
-	DeleteRole(tx *sql.Tx, roleId string) error
+
+	UpdateRoles(roles []*types.Role, groupId string) error
+	UpdateRolesWithTx(tx *sql.Tx, roles []*types.Role, groupId string) error
+
 	CreateGroupOwnerRole(tx *sql.Tx, groupId string, userId string) error
 
 	GetMembersWithRoles(groupId string) ([]*types.MemberRole, error)
 	GetMembersWithRolesWithTx(tx *sql.Tx, groupId string) ([]*types.MemberRole, error)
+
+	DeleteRole(roleId string) error
+	DeleteRoleWithTx(tx *sql.Tx, roleId string) error
 
 	AddMemberRole(tx *sql.Tx, userId string, roleId string) error
 	RemoveMemberRole(tx *sql.Tx, userId string, roleId string) error
@@ -199,9 +204,11 @@ func (repository *RoleRepositoryImpl) AddMemberRole(tx *sql.Tx, userId string, r
 func (repository *RoleRepositoryImpl) GetMembersWithRolesWithTx(tx *sql.Tx, groupId string) ([]*types.MemberRole, error) {
 	return repository.getMembersWithRoles(tx, groupId)
 }
+
 func (repository *RoleRepositoryImpl) GetMembersWithRoles(groupId string) ([]*types.MemberRole, error) {
 	return repository.getMembersWithRoles(repository.client, groupId)
 }
+
 func (repository *RoleRepositoryImpl) getMembersWithRoles(exe types.Execer, groupId string) ([]*types.MemberRole, error) {
 	query := "SELECT u.id AS user_id, u.name AS user_name, r.id AS role_id, r.name AS role_name " +
 		"FROM user u " +
@@ -300,9 +307,17 @@ func (repository *RoleRepositoryImpl) ReadRoles(groupId string) ([]*types.Role, 
 	return roles, nil
 }
 
-func (repository *RoleRepositoryImpl) DeleteRole(tx *sql.Tx, roleId string) error {
+func (repository *RoleRepositoryImpl) DeleteRoleWithTx(tx *sql.Tx, roleId string) error {
+	return repository.deleteRole(tx, roleId)
+}
+
+func (repository *RoleRepositoryImpl) DeleteRole(roleId string) error {
+	return repository.deleteRole(repository.client, roleId)
+}
+
+func (repository *RoleRepositoryImpl) deleteRole(exe types.Execer, roleId string) error {
 	// delete all user_role mappings
-	user_role_stmt, err := tx.Prepare("DELETE FROM user_role WHERE roleId = ?")
+	user_role_stmt, err := exe.Prepare("DELETE FROM user_role WHERE roleId = ?")
 	if err != nil {
 		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}
@@ -311,7 +326,7 @@ func (repository *RoleRepositoryImpl) DeleteRole(tx *sql.Tx, roleId string) erro
 		return fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 	}
 	// delete role
-	stmt, err := tx.Prepare("DELETE FROM role WHERE id = ?")
+	stmt, err := exe.Prepare("DELETE FROM role WHERE id = ?")
 	if err != nil {
 		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}
@@ -322,24 +337,32 @@ func (repository *RoleRepositoryImpl) DeleteRole(tx *sql.Tx, roleId string) erro
 	return nil
 }
 
-func (repository *RoleRepositoryImpl) UpdateRoles(tx *sql.Tx, roles []*types.Role, groupId string) error {
+func (repository *RoleRepositoryImpl) UpdateRoles(roles []*types.Role, groupId string) error {
+	return repository.updateRoles(repository.client, roles, groupId)
+}
+
+func (repository *RoleRepositoryImpl) UpdateRolesWithTx(tx *sql.Tx, roles []*types.Role, groupId string) error {
+	return repository.updateRoles(tx, roles, groupId)
+}
+
+func (repository *RoleRepositoryImpl) updateRoles(exe types.Execer, roles []*types.Role, groupId string) error {
 
 	// check
-	checkStmt, err := tx.Prepare("SELECT id FROM role WHERE id = ?")
+	checkStmt, err := exe.Prepare("SELECT id FROM role WHERE id = ?")
 	if err != nil {
 		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}
 	defer checkStmt.Close()
 
 	// update (existing roles)
-	updateStmt, err := tx.Prepare("UPDATE role SET name = ?, rename_organisation = ?, delete_organisation = ?, invite_member = ?, remove_member = ?, create_case = ?, update_case_metadata = ?, delete_case = ?, export_case = ?, view_logs = ?, export_logs = ? WHERE id = ?")
+	updateStmt, err := exe.Prepare("UPDATE role SET name = ?, rename_organisation = ?, delete_organisation = ?, invite_member = ?, remove_member = ?, create_case = ?, update_case_metadata = ?, delete_case = ?, export_case = ?, view_logs = ?, export_logs = ? WHERE id = ?")
 	if err != nil {
 		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}
 	defer updateStmt.Close()
 
 	// insert (new roles)
-	insertStmt, err := tx.Prepare("INSERT INTO role VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	insertStmt, err := exe.Prepare("INSERT INTO role VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}

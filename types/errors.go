@@ -6,6 +6,11 @@ var (
 	ErrAssert = errors.New("error asserting value")
 )
 
+// user handler
+var (
+	ErrUserAlreadyExists = errors.New("user already exists")
+)
+
 // core repository
 var (
 	ErrTxCreate         = errors.New("error creating transaction")

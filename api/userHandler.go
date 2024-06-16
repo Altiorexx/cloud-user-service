@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -161,7 +162,6 @@ func (handler *UserHandlerImpl) SignupVerify(c *gin.Context) {
 
 // Sign up using email, password.
 func (handler *UserHandlerImpl) signup_EMAIL_PASSWORD(c *gin.Context) {
-
 	var body struct {
 		UID      string `json:"uid" binding:"required"`
 		Name     string `json:"name" binding:"required"`
@@ -172,63 +172,30 @@ func (handler *UserHandlerImpl) signup_EMAIL_PASSWORD(c *gin.Context) {
 		c.String(http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := types.Validate.Struct(body); err != nil {
-		c.String(http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// start new db transaction
-	tx, err := handler.core.NewTransaction(c)
-	if err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	defer func() {
-
-		// rollback in case of panic
-		if r := recover(); r != nil {
-			tx.Rollback()
-			c.String(http.StatusInternalServerError, fmt.Sprintf("Internal server error: %v", r))
-			log.Printf("(signup) panic: %+v\n", r)
-			return
+	err := handler.core.WithTransaction(c.Request.Context(), func(tx *sql.Tx) error {
+		if err := handler.core.CreateUserWithTx(tx, body.UID, body.Name, body.Email, ""); err != nil {
+			if strings.Contains(err.Error(), "Duplicate entry") {
+				return types.ErrUserAlreadyExists
+			} else {
+				log.Printf("error occured while creating user: %+v\n", err)
+				return err
+			}
 		}
-
-		// rollback in case of error during transaction,
-		// this also includes removing the user from firebase
-		if err != nil {
-			tx.Rollback()
-			handler.firebase.DeleteUser(body.UID)
-			c.String(http.StatusInternalServerError, fmt.Sprintf("Error processing request: %s", err.Error()))
-			log.Printf("(signup) error during transaction: %+v\n", err)
-			return
-		}
-
-	}()
-
-	// create user
-	if err := handler.core.CreateUserWithTx(tx, body.UID, body.Name, body.Email, body.Password); err != nil {
-		if strings.Contains(err.Error(), "Duplicate entry") {
-			log.Println("user already exists")
-			c.Status(http.StatusConflict)
-			return
-		} else {
-			log.Printf("error occured while creating user: %+v\n", err)
+		// create default group and map user to it
+		if err := handler.core.CreateOrganisationWithTx(tx, "My Group", body.UID); err != nil {
 			c.String(http.StatusInternalServerError, err.Error())
-			return
+			return err
 		}
-	}
-
-	// create organisation and map user to it
-	if err := handler.core.CreateOrganisationWithTx(tx, "My Group", body.UID); err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// try to commit
-	if err := tx.Commit(); err != nil {
-		c.String(http.StatusInternalServerError, fmt.Sprintf("error committing transaction: %s", err.Error()))
-		log.Printf("(signup) error committing transaction: %+v\n", err)
+		return nil
+	})
+	if err != nil {
+		log.Printf("error signing up: %+v\n", err)
+		switch {
+		case strings.Contains(err.Error(), "Duplicate entry"):
+			c.JSON(http.StatusConflict, gin.H{"error": "user already exists"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		}
 		return
 	}
 
@@ -237,83 +204,46 @@ func (handler *UserHandlerImpl) signup_EMAIL_PASSWORD(c *gin.Context) {
 		c.String(http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	// send response
 	c.Status(http.StatusCreated)
 }
 
 // Signup using a third party provider, Google, Microsoft etc.
 func (handler *UserHandlerImpl) signup_PROVIDER(c *gin.Context) {
-
-	// parse and validate body
 	var body struct {
 		UID   string `json:"uid" binding:"required"`
 		Name  string `json:"name"`
 		Email string `json:"email" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.String(http.StatusBadRequest, err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := types.Validate.Struct(body); err != nil {
-		c.String(http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// start new db transaction
-	tx, err := handler.core.NewTransaction(c)
-	if err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	defer func() {
-
-		// rollback in case of panic
-		if r := recover(); r != nil {
-			tx.Rollback()
-			c.String(http.StatusInternalServerError, fmt.Sprintf("Internal server error: %v", r))
-			log.Printf("(signup) panic: %+v\n", r)
-			return
+	err := handler.core.WithTransaction(c.Request.Context(), func(tx *sql.Tx) error {
+		if err := handler.core.CreateUserWithTx(tx, body.UID, body.Name, body.Email, ""); err != nil {
+			if strings.Contains(err.Error(), "Duplicate entry") {
+				return types.ErrUserAlreadyExists
+			} else {
+				log.Printf("error occured while creating user: %+v\n", err)
+				return err
+			}
 		}
-
-		// rollback in case of error during transaction
-		if err != nil {
-			tx.Rollback()
-			c.String(http.StatusInternalServerError, fmt.Sprintf("Error processing request: %s", err.Error()))
-			log.Printf("(signup) error during transaction: %+v\n", err)
-			return
-		}
-
-	}()
-
-	// create user
-	if err := handler.core.CreateUserWithTx(tx, body.UID, body.Name, body.Email, ""); err != nil {
-		if strings.Contains(err.Error(), "Duplicate entry") {
-			log.Println("user already exists")
-			c.Status(http.StatusConflict)
-			return
-		} else {
-			log.Printf("error occured while creating user: %+v\n", err)
+		// create default group and map user to it
+		if err := handler.core.CreateOrganisationWithTx(tx, "My Group", body.UID); err != nil {
 			c.String(http.StatusInternalServerError, err.Error())
-			return
+			return err
 		}
-	}
-
-	// create organisation and map user to it
-	if err := handler.core.CreateOrganisationWithTx(tx, "My Group", body.UID); err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
+		return nil
+	})
+	if err != nil {
+		log.Printf("error signing up: %+v\n", err)
+		switch {
+		case strings.Contains(err.Error(), "Duplicate entry"):
+			c.JSON(http.StatusConflict, gin.H{"error": "user already exists"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		}
 		return
 	}
-
-	// try to commit
-	if err := tx.Commit(); err != nil {
-		c.String(http.StatusInternalServerError, fmt.Sprintf("error committing transaction: %s", err.Error()))
-		log.Printf("(createUser) error committing transaction: %+v\n", err)
-		return
-	}
-
-	// send response
 	c.Status(http.StatusCreated)
 }
 
@@ -326,47 +256,6 @@ func (handler *UserHandlerImpl) userExists(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-/* ///////// This method has signup + invitation logic, steal from here..
-func (handler *UserHandlerImpl) signup(c *gin.Context) {
-
-	// parse and validate body
-	var body struct {
-		Email        string `json:"email" binding:"required"`
-		Password     string `json:"password" binding:"required"`
-		Name         string `json:"name" binding:"required"`
-		InvitationId string `json:"invitationId" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		log.Println(err)
-		c.Status(http.StatusBadRequest)
-		return
-	}
-	if err := types.Validate.Struct(body); err != nil {
-		c.String(http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// Sign up user by invitation
-	if err := handler.core.InvitationSignup(body.InvitationId, body.Email, body.Password, body.Name); err != nil {
-		switch err {
-
-		case types.ErrInvitationNotFound:
-			c.String(http.StatusForbidden, "no invitation found")
-
-		case types.ErrPrepareStatement, types.ErrRollback, types.ErrTxCancelled, types.ErrGenericSQL, types.ErrTxCommit:
-			c.String(http.StatusInternalServerError, "database error")
-
-		default:
-			log.Printf("unhandled error in FullSignup: %+v\n", err)
-			c.String(http.StatusInternalServerError, err.Error())
-		}
-		return
-	}
-
-	// send response
-	c.Status(http.StatusOK)
-}*/
-
 // Logs when a user uses a service, is triggered by create case.
 func (handler *UserHandlerImpl) registerServiceUsed(c *gin.Context) {
 
@@ -375,13 +264,6 @@ func (handler *UserHandlerImpl) registerServiceUsed(c *gin.Context) {
 	if err := c.ShouldBindJSON(&body); err != nil {
 		log.Println(err)
 		c.Status(http.StatusBadRequest)
-		return
-	}
-
-	// validate body
-	if err := types.Validate.Struct(body); err != nil {
-		log.Println(err)
-		c.JSON(http.StatusBadRequest, err)
 		return
 	}
 
