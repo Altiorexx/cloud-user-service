@@ -297,11 +297,27 @@ func (handler *GroupHandlerImpl) updateMetadata(c *gin.Context) {
 // Delete a group and related data.
 func (handler *GroupHandlerImpl) deleteGroup(c *gin.Context) {
 	groupId := c.Param("id")
-
-	// should check whether the user has permission to delete before anything
-
-	if err := handler.core.DeleteGroup(groupId); err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
+	_userId, _ := c.Get("userId")
+	userId, ok := _userId.(string)
+	if !ok {
+		log.Printf("somehow context userId type assertion failed?!")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized client"})
+		return
+	}
+	tx, err := handler.core.NewTransaction(c.Request.Context())
+	if err != nil {
+		log.Printf("error starting transaction: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	if err := handler.core.DeleteGroupWithTx(tx, userId, groupId); err != nil {
+		log.Printf("error deleting group: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	if err := handler.core.CommitTransaction(tx); err != nil {
+		log.Printf("error comitting transaction: %+v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
 	c.Status(http.StatusOK)

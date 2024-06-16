@@ -20,13 +20,12 @@ import (
 )
 
 type CoreRepository interface {
-	NewTransaction(ctx context.Context) (*sql.Tx, error)
+	NewTransaction(ctx context.Context, readOnly bool) (*sql.Tx, error)
 	CommitTransaction(tx *sql.Tx) error
 	ReadUserById(userId string) (*types.User, error)
 	UpdateGroupName(groupId string, name string) error
 	UpdateGroupNameWithTx(tx *sql.Tx, groupId string, name string) error
-	DeleteGroup(groupId string) error
-	DeleteGroupWithTx(tx *sql.Tx, groupId string) error
+	DeleteGroupWithTx(tx *sql.Tx, userId string, groupId string) error
 	UpdatePassword(uid string, password string) error
 	Login(uid string, email string, password string) error
 	Signup(userId string, name string) error
@@ -131,8 +130,12 @@ func NewCoreRepository(opts *CoreRepositoryOpts, key string) *CoreRepositoryImpl
 }
 
 // Creates a new transaction.
-func (repository *CoreRepositoryImpl) NewTransaction(ctx context.Context) (*sql.Tx, error) {
-	tx, err := repository.client.BeginTx(ctx, &sql.TxOptions{})
+func (repository *CoreRepositoryImpl) NewTransaction(ctx context.Context, readOnly bool) (*sql.Tx, error) {
+	opts := &sql.TxOptions{}
+	if readOnly {
+		opts.ReadOnly = true
+	}
+	tx, err := repository.client.BeginTx(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -188,18 +191,10 @@ func (repository *CoreRepositoryImpl) UpdateGroupNameWithTx(tx *sql.Tx, groupId 
 	return nil
 }
 
-// Deletes the group and all associations.
-func (repository *CoreRepositoryImpl) DeleteGroup(groupId string) error {
-	return repository.DeleteGroupWithTx(nil, groupId)
-}
+// Deletes the group and all associations, if the user deleting it has no groups left, this creates a default group afterwards.
+func (repository *CoreRepositoryImpl) DeleteGroupWithTx(tx *sql.Tx, userId string, groupId string) error {
 
-// Deletes the group and all associations.
-func (repository *CoreRepositoryImpl) DeleteGroupWithTx(tx *sql.Tx, groupId string) error {
-	var c types.Execer = repository.client
-	if tx != nil {
-		c = tx
-	}
-	stmt, err := c.Prepare("CALL GroupCleanup(?)")
+	stmt, err := tx.Prepare("CALL GroupCleanup(?)")
 	if err != nil {
 		return err
 	}
@@ -207,6 +202,28 @@ func (repository *CoreRepositoryImpl) DeleteGroupWithTx(tx *sql.Tx, groupId stri
 	if _, err := stmt.Exec(groupId); err != nil {
 		return err
 	}
+
+	// check if user is associated with atleast one group, if not, create a default
+	stmt2, err := tx.Prepare("CALL GetUserOrganisations(?)")
+	if err != nil {
+		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
+	}
+	defer stmt2.Close()
+	rows, err := stmt2.Query(userId)
+	if err != nil {
+		log.Printf("error reading user groups: %+v\n", err)
+		return fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
+	}
+	defer rows.Close()
+
+	// otherwise create a default group for the user
+	if !rows.Next() {
+		rows.Close()
+		if err = repository.CreateOrganisationWithTx(tx, "My organisation", userId); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

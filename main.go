@@ -27,6 +27,9 @@ func InitApp() *App {
 							Email: service.NewEmailService(),
 						}, "1"),
 					}, "1"),
+					Role: repository.NewRoleRepository(&repository.RoleRepositoryOpts{
+						Key: "1",
+					}),
 					Firebase: service.NewFirebaseService(&service.FirebaseServiceOpts{
 						Email: service.NewEmailService(),
 					}, "1"),

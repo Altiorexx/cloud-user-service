@@ -25,6 +25,8 @@ type RoleRepository interface {
 
 	AddMemberRole(tx *sql.Tx, userId string, roleId string) error
 	RemoveMemberRole(tx *sql.Tx, userId string, roleId string) error
+
+	ReadMemberRoles(tx *sql.Tx, userId string, groupId string) ([]*types.Role, error)
 }
 
 type RoleRepositoryOpts struct {
@@ -89,6 +91,41 @@ func NewRoleRepository(opts *RoleRepositoryOpts) *RoleRepositoryImpl {
 		client: db,
 	}
 	return role_repository_instance_map[opts.Key]
+}
+
+// Reads a user's roles within a group.
+func (repository *RoleRepositoryImpl) ReadMemberRoles(tx *sql.Tx, userId string, groupId string) ([]*types.Role, error) {
+	rows, err := tx.Query("SELECT r.id, r.name, r.groupId, "+
+		"r.renameGroup, r.deleteGroup, r.inviteMember, r.removeMember, "+
+		"r.createCase, r.updateCaseMetadata, r.deleteCase, r.exportCase, "+
+		"r.viewLogs, r.exportLogs "+
+		"FROM user_role ur "+
+		"INNER JOIN role r ON ur.roleId = r.id "+
+		"INNER JOIN organisation_user ou ON ur.userId = ou.userId "+
+		"WHERE ur.userId = ? AND ou.organisationId = ?", userId, groupId)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var roles []*types.Role
+	for rows.Next() {
+		var role types.Role
+		if err := rows.Scan(
+			&role.Id, &role.Name, &role.GroupId,
+			&role.RenameGroup, &role.DeleteGroup, &role.InviteMember, &role.RemoveMember,
+			&role.CreateCase, &role.UpdateCaseMetadata, &role.DeleteCase, &role.ExportCase,
+			&role.ViewLogs, &role.ExportLogs); err != nil {
+			return nil, err
+		}
+		roles = append(roles, &role)
+	}
+	return roles, nil
+}
+
+// Checks if the user has permission to an action.
+func (repository *RoleRepositoryImpl) HasPermission(tx *sql.Tx, userId string, groupId string) error {
+
+	return nil
 }
 
 // Remove a role from the specified user, by deleting the user_role mapping.

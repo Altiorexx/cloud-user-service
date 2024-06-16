@@ -1,5 +1,21 @@
 package types
 
+var (
+	RENAME_GROUP = "RenameGroup"
+	DELETE_GROUP = "DeleteGroup"
+
+	INVITE_MEMBER = "InviteMember"
+	REMOVE_MEMBER = "RemoveMember"
+
+	CREATE_CASE          = "CreateCase"
+	UPDATE_CASE_METADATA = "UpdateCaseMetadata"
+	DELETE_CASE          = "DeleteCase"
+	EXPORT_CASE          = "ExportCase"
+
+	VIEW_LOGS   = "ViewLogs"
+	EXPORT_LOGS = "ExportLogs"
+)
+
 type MemberRole struct {
 	Id     string  `json:"id" binding:"required"`
 	Member string  `json:"member" binding:"required"`
