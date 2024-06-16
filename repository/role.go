@@ -21,12 +21,15 @@ type RoleRepository interface {
 	UpdateRoles(tx *sql.Tx, roles []*types.Role, groupId string) error
 	DeleteRole(tx *sql.Tx, roleId string) error
 	CreateGroupOwnerRole(tx *sql.Tx, groupId string, userId string) error
+
 	GetMembersWithRoles(groupId string) ([]*types.MemberRole, error)
+	GetMembersWithRolesWithTx(tx *sql.Tx, groupId string) ([]*types.MemberRole, error)
 
 	AddMemberRole(tx *sql.Tx, userId string, roleId string) error
 	RemoveMemberRole(tx *sql.Tx, userId string, roleId string) error
 
-	ReadMemberRoles(tx *sql.Tx, userId string, groupId string) ([]*types.Role, error)
+	ReadMemberRoles(userId string, groupId string) ([]*types.Role, error)
+	ReadMemberRolesWithTx(tx *sql.Tx, userId string, groupId string) ([]*types.Role, error)
 }
 
 type RoleRepositoryOpts struct {
@@ -93,9 +96,17 @@ func NewRoleRepository(opts *RoleRepositoryOpts) *RoleRepositoryImpl {
 	return role_repository_instance_map[opts.Key]
 }
 
+func (repository *RoleRepositoryImpl) ReadMemberRoles(userId string, groupId string) ([]*types.Role, error) {
+	return repository.readMemberRoles(repository.client, userId, groupId)
+}
+
+func (repository *RoleRepositoryImpl) ReadMemberRolesWithTx(tx *sql.Tx, userId string, groupId string) ([]*types.Role, error) {
+	return repository.readMemberRoles(tx, userId, groupId)
+}
+
 // Reads a user's roles within a group.
-func (repository *RoleRepositoryImpl) ReadMemberRoles(tx *sql.Tx, userId string, groupId string) ([]*types.Role, error) {
-	rows, err := tx.Query("SELECT r.id, r.name, r.groupId, "+
+func (repository *RoleRepositoryImpl) readMemberRoles(exe types.Execer, userId string, groupId string) ([]*types.Role, error) {
+	rows, err := exe.Query("SELECT r.id, r.name, r.groupId, "+
 		"r.renameGroup, r.deleteGroup, r.inviteMember, r.removeMember, "+
 		"r.createCase, r.updateCaseMetadata, r.deleteCase, r.exportCase, "+
 		"r.viewLogs, r.exportLogs "+
@@ -140,9 +151,9 @@ func (repository *RoleRepositoryImpl) RemoveMemberRole(tx *sql.Tx, userId string
 	var roleName string
 	if err := checkRoleStmt.QueryRow(roleId).Scan(&roleName); err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("role with id %s not found", roleId)
+			return fmt.Errorf("%w:, role with id %s not found", types.ErrNotFound, roleId)
 		}
-		return fmt.Errorf("failed to execute query: %v", err)
+		return fmt.Errorf("%w: failed to execute query: %v", types.ErrGenericSQL, err)
 	}
 
 	if roleName == "Group Owner" {
@@ -185,25 +196,29 @@ func (repository *RoleRepositoryImpl) AddMemberRole(tx *sql.Tx, userId string, r
 	return nil
 }
 
+func (repository *RoleRepositoryImpl) GetMembersWithRolesWithTx(tx *sql.Tx, groupId string) ([]*types.MemberRole, error) {
+	return repository.getMembersWithRoles(tx, groupId)
+}
 func (repository *RoleRepositoryImpl) GetMembersWithRoles(groupId string) ([]*types.MemberRole, error) {
+	return repository.getMembersWithRoles(repository.client, groupId)
+}
+func (repository *RoleRepositoryImpl) getMembersWithRoles(exe types.Execer, groupId string) ([]*types.MemberRole, error) {
 	query := "SELECT u.id AS user_id, u.name AS user_name, r.id AS role_id, r.name AS role_name " +
 		"FROM user u " +
 		"INNER JOIN organisation_user ou ON u.id = ou.userId " +
 		"INNER JOIN user_role ur ON u.id = ur.userId " +
 		"INNER JOIN role r ON ur.roleId = r.id " +
 		"WHERE ou.organisationId = ?"
-
-	rows, err := repository.client.Query(query, groupId)
+	rows, err := exe.Query(query, groupId)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute query: %v", err)
+		return nil, fmt.Errorf("%w: failed to execute query: %v", types.ErrGenericSQL, err)
 	}
 	defer rows.Close()
-
 	memberRolesMap := make(map[string]*types.MemberRole)
 	for rows.Next() {
 		var userId, userName, roleId, roleName string
 		if err := rows.Scan(&userId, &userName, &roleId, &roleName); err != nil {
-			return nil, fmt.Errorf("failed to scan row: %v", err)
+			return nil, fmt.Errorf("%w: failed to scan row: %v", types.ErrGenericSQL, err)
 		}
 		if _, exists := memberRolesMap[userId]; !exists {
 			memberRolesMap[userId] = &types.MemberRole{
@@ -217,18 +232,14 @@ func (repository *RoleRepositoryImpl) GetMembersWithRoles(groupId string) ([]*ty
 			Name: roleName,
 		})
 	}
-
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows iteration error: %v", err)
+		return nil, fmt.Errorf("%w: rows iteration error: %v", types.ErrGenericSQL, err)
 	}
-
 	var memberRoles []*types.MemberRole
 	for _, mr := range memberRolesMap {
 		memberRoles = append(memberRoles, mr)
 	}
-
 	return memberRoles, nil
-
 }
 
 func (repository *RoleRepositoryImpl) CreateGroupOwnerRole(tx *sql.Tx, groupId string, userId string) error {

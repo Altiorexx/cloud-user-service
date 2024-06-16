@@ -20,6 +20,8 @@ import (
 )
 
 type CoreRepository interface {
+	WithTransaction(ctx context.Context, fn func(tx *sql.Tx) error) error
+
 	NewTransaction(ctx context.Context, readOnly bool) (*sql.Tx, error)
 	CommitTransaction(tx *sql.Tx) error
 	ReadUserById(userId string) (*types.User, error)
@@ -127,6 +129,40 @@ func NewCoreRepository(opts *CoreRepositoryOpts, key string) *CoreRepositoryImpl
 		role:     opts.Role,
 	}
 	return core_repository_instance_map[key]
+}
+
+// Constructs and wraps a callback with a transaction, ensuring proper commit and rollback handling.
+func (repository *CoreRepositoryImpl) WithTransaction(ctx context.Context, fn func(tx *sql.Tx) error) error {
+
+	// create tx
+	tx, err := repository.NewTransaction(ctx, false)
+	if err != nil {
+		return err
+	}
+
+	// define commit and rollback handling (defer)
+	defer func() {
+		if r := recover(); r != nil {
+			repository.RollbackTransaction(tx)
+			panic(r)
+		} else if err != nil {
+			repository.RollbackTransaction(tx)
+		} else {
+			err = repository.CommitTransaction(tx)
+		}
+	}()
+
+	// invoke callback
+	err = fn(tx)
+
+	// return error
+	return err
+}
+
+func (repository *CoreRepositoryImpl) RollbackTransaction(tx *sql.Tx) {
+	if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+		log.Printf("transaction rollback failed: %+v\n", err)
+	}
 }
 
 // Creates a new transaction.

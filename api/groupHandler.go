@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -76,7 +77,6 @@ func (handler *GroupHandlerImpl) RegisterRoutes(router *gin.Engine) {
 // Add role to group member.
 func (handler *GroupHandlerImpl) addMemberRole(c *gin.Context) {
 	ctx := c.Request.Context()
-
 	var body struct {
 		UserId string `json:"userId" binding:"required"`
 		RoleId string `json:"roleId" binding:"required"`
@@ -85,32 +85,20 @@ func (handler *GroupHandlerImpl) addMemberRole(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	tx, err := handler.core.NewTransaction(ctx)
+	err := handler.core.WithTransaction(ctx, func(tx *sql.Tx) error {
+		return handler.role.AddMemberRole(tx, body.UserId, body.RoleId)
+	})
 	if err != nil {
-		log.Printf("error creating transaction: %+v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		return
-	}
-
-	if err := handler.role.AddMemberRole(tx, body.UserId, body.RoleId); err != nil {
 		log.Printf("error mapping role to user: %+v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
-	}
 
-	if err := handler.core.CommitTransaction(tx); err != nil {
-		log.Printf("error committing transaction: %+v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		return
 	}
-
 	c.Status(http.StatusOK)
 }
 
 func (handler *GroupHandlerImpl) removeMemberRole(c *gin.Context) {
 	ctx := c.Request.Context()
-
 	var body struct {
 		UserId string `json:"userId" binding:"required"`
 		RoleId string `json:"roleId" binding:"required"`
@@ -119,29 +107,25 @@ func (handler *GroupHandlerImpl) removeMemberRole(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	tx, err := handler.core.NewTransaction(ctx)
+	err := handler.core.WithTransaction(ctx, func(tx *sql.Tx) error {
+		return handler.role.RemoveMemberRole(tx, body.UserId, body.RoleId)
+	})
 	if err != nil {
-		log.Printf("error creating transaction: %+v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		log.Printf("error removing member role: %+v\n", err)
+		switch {
+		case errors.Is(err, types.ErrForbiddenOperation):
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		case errors.Is(err, types.ErrNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		}
 		return
 	}
-
-	if err := handler.role.RemoveMemberRole(tx, body.UserId, body.RoleId); err != nil {
-		log.Printf("error removing user role mapping: %+v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		return
-	}
-
-	if err := handler.core.CommitTransaction(tx); err != nil {
-		log.Printf("error committing transaction: %+v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		return
-	}
-
 	c.Status(http.StatusOK)
 }
 
+// Get all members with their associated roles within a group.
 func (handler *GroupHandlerImpl) getMemberRoles(c *gin.Context) {
 	_ = c.Request.Context()
 	groupId := c.Param("id")

@@ -55,8 +55,8 @@ func NewMiddlewareHandler(opts *MiddlewareHandlerOpts) *MiddlewareHandlerImpl {
 
 func (handler *MiddlewareHandlerImpl) RegisterRoutes(router *gin.Engine) {
 	router.Use(handler.VerifyToken)
-	router.Use(handler.checkPermission)
-	router.Use(handler.LogUserAction)
+	//router.Use(handler.checkPermission)
+	//router.Use(handler.LogUserAction)
 	// should also have a middleware to ensure only requests from recognized services go through.
 }
 
@@ -136,14 +136,7 @@ func (handler *MiddlewareHandlerImpl) checkPermission(c *gin.Context) {
 		return
 	}
 
-	tx, err := handler.core.NewTransaction(c.Request.Context(), true)
-	if err != nil {
-		log.Printf("error creating transaction: %+v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		return
-	}
-
-	memberRoles, err := handler.role.ReadMemberRoles(tx, c.GetString("userId"), groupId)
+	memberRoles, err := handler.role.ReadMemberRoles(c.GetString("userId"), groupId)
 	if err != nil {
 		log.Printf("error reading member roles: %+v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
