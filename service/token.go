@@ -26,12 +26,6 @@ func NewTokenService(opts *TokenServiceOpts) TokenService {
 	return &TokenServiceImpl{
 		service_token_secret: os.Getenv("SERVICE_TOKEN_SECRET"),
 		issuer:               os.Getenv("SERVICE_TOKEN_ISSUER"),
-		internalList: []string{
-			"case.service.altiore.io",
-
-			"http://localhost:3000",
-			"http://localhost:5000",
-		},
 	}
 }
 

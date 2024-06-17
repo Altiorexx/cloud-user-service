@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"user.service.altiore.io/repository"
@@ -20,25 +21,31 @@ type MiddlewareHandler interface {
 type MiddlewareHandlerOpts struct {
 	Core     repository.CoreRepository
 	Role     repository.RoleRepository
+	Log      repository.LogRepository
 	Firebase service.FirebaseService
 	Token    service.TokenService
 }
 
 type MiddlewareHandlerImpl struct {
-	core          repository.CoreRepository
-	role          repository.RoleRepository
-	firebase      service.FirebaseService
-	token         service.TokenService
+	core     repository.CoreRepository
+	role     repository.RoleRepository
+	log      repository.LogRepository
+	firebase service.FirebaseService
+	token    service.TokenService
+	cache    map[string]*types.User
+
 	exemptPaths   []*regexp.Regexp
 	permissionMap map[string]string
 }
 
 func NewMiddlewareHandler(opts *MiddlewareHandlerOpts) *MiddlewareHandlerImpl {
-	return &MiddlewareHandlerImpl{
+	h := &MiddlewareHandlerImpl{
 		core:     opts.Core,
 		role:     opts.Role,
+		log:      opts.Log,
 		firebase: opts.Firebase,
 		token:    opts.Token,
+		cache:    make(map[string]*types.User),
 		exemptPaths: []*regexp.Regexp{
 			regexp.MustCompile("/api/token/verify"),
 			regexp.MustCompile("^/api/user/([a-zA-Z0-9]+)/exists$"),
@@ -70,28 +77,47 @@ func NewMiddlewareHandler(opts *MiddlewareHandlerOpts) *MiddlewareHandlerImpl {
 			*/
 		},
 	}
+	h.cacheFlushWorker()
+	return h
 }
 
 func (handler *MiddlewareHandlerImpl) RegisterRoutes(router *gin.Engine) {
-	router.Use(handler.isInternalService)
+	router.Use(handler.verifyInternalServiceToken)
 	router.Use(handler.verifyToken)
 	router.Use(handler.checkPermission)
 	router.Use(handler.logUserAction)
 }
 
-func (handler *MiddlewareHandlerImpl) isInternalService(c *gin.Context) {
+// Flushes the handler cache periodically.
+func (handler *MiddlewareHandlerImpl) cacheFlushWorker() {
+	ticker := time.NewTicker(time.Minute * 30)
+	defer ticker.Stop()
+	for {
+		<-ticker.C
+		handler.cache = make(map[string]*types.User)
+	}
+}
 
+func (handler *MiddlewareHandlerImpl) verifyInternalServiceToken(c *gin.Context) {
 	if token := c.GetHeader("X-Internal-Token"); token != "" {
 		if err := handler.token.CheckToken(token); err != nil {
-
+			log.Printf("internal token check resulted in error: %+v\n", err)
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "invalid token"})
+			return
 		}
-
+		// set this to skip other middleware (they are user minded, not service minded)
+		c.Set("skip", true)
 	}
-
 }
 
 // Verifies the token for every incoming request.
 func (handler *MiddlewareHandlerImpl) verifyToken(c *gin.Context) {
+
+	// skip if it's a service request
+	if c.GetBool("skip") {
+		c.Next()
+		return
+	}
 
 	// don't verify on specified paths
 	for _, path := range handler.exemptPaths {
@@ -144,6 +170,12 @@ func (handler *MiddlewareHandlerImpl) verifyToken(c *gin.Context) {
 
 func (handler *MiddlewareHandlerImpl) checkPermission(c *gin.Context) {
 
+	// skip if it's a service request
+	if c.GetBool("skip") {
+		c.Next()
+		return
+	}
+
 	// create a key and retrieve needed permission
 	neededPermission, exists := handler.permissionMap[fmt.Sprintf("%s %s", c.Request.Method, c.FullPath())]
 	if !exists {
@@ -180,6 +212,12 @@ func (handler *MiddlewareHandlerImpl) checkPermission(c *gin.Context) {
 // This handler is a bit messy, final implementation is yet to be decided.
 func (handler *MiddlewareHandlerImpl) logUserAction(c *gin.Context) {
 
+	// skip if it's a service request
+	if c.GetBool("skip") {
+		c.Next()
+		return
+	}
+
 	// skip requests that doesn't need permission
 	if !c.GetBool("needsPermission") {
 		c.Next()
@@ -188,8 +226,6 @@ func (handler *MiddlewareHandlerImpl) logUserAction(c *gin.Context) {
 
 	// should access the permission state, and include it in the log entry
 	hasPermission := c.GetBool("hasPermission")
-
-	log.Printf("has perms: %+v\n", hasPermission)
 
 	// evaluate what to do with the request
 	// go next immediately, because the user should not be affected by this at all (good point?)
@@ -200,11 +236,64 @@ func (handler *MiddlewareHandlerImpl) logUserAction(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing permission"})
 	}
 
-	// check that the request is business relevant.
-	// E.g. viewing available services is not important to log, but creating a new case is.
+	// only log events for group use cases, anything else is meaningless..
+	groupId, exists := c.Params.Get("id")
+	if !exists {
+		return
+	}
 
-	// store somewhere
+	// transform path to use case, end users are most interested in user actions (rename group, invite member etc)
+	action, exists := handler.permissionMap[fmt.Sprintf("%s %s", c.Request.Method, c.FullPath())]
+	if !exists {
+		action = c.FullPath()
+	}
 
+	// check if there was a userId bound to the request
+	userId := c.GetString("userId")
+	if userId == "" {
+		userId = "None"
+	}
+
+	// get email by userId
+	var email string
+	user, exists := handler.cache[userId]
+	if !exists {
+		user, err := handler.core.ReadUserById(userId)
+		if err != nil {
+			log.Printf("error reading user by id to get mail for logging: %+v\n", err)
+		} else {
+			email = user.Email
+		}
+	}
+	if user.Email == "" {
+		email = "Error reading email"
+	}
+
+	// Transform status code to business comprehendable
+	var status string
+	switch c.Writer.Status() {
+	case http.StatusOK:
+		status = "OK"
+	case http.StatusInternalServerError:
+		status = "Error"
+	case http.StatusForbidden:
+		status = "Forbidden"
+	case http.StatusConflict:
+		status = "OK"
+	case http.StatusBadRequest:
+		status = "Error"
+	case http.StatusUnauthorized:
+		status = "Unauthorized"
+	}
+
+	handler.log.NewEntry(&types.LogEntry{
+		GroupId:   groupId,
+		Action:    action,
+		Status:    status,
+		UserId:    userId,
+		Email:     email,
+		Timestamp: time.Now().Format(time.RFC3339),
+	})
 }
 
 // checkPermission checks if a user has the necessary permission

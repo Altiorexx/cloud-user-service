@@ -14,7 +14,6 @@ func LoadEnvironmentVariables() {
 
 	mandatory := []string{
 		"PORT",
-		"JWT_SECRET",
 		"DB_BUSINESS_USER",
 		"DB_BUSINESS_PASS",
 		"DB_BUSINESS_HOST",
