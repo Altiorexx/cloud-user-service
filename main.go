@@ -30,9 +30,11 @@ func InitApp() *App {
 					Role: repository.NewRoleRepository(&repository.RoleRepositoryOpts{
 						Key: "1",
 					}),
+					Log: repository.NewLogRepository(&repository.LogRepositoryOpts{Key: "1"}),
 					Firebase: service.NewFirebaseService(&service.FirebaseServiceOpts{
 						Email: service.NewEmailService(),
 					}, "1"),
+					Token: service.NewTokenService(nil),
 				}),
 				api.NewUserHandler(&api.UserHandlerOpts{
 					Core: repository.NewCoreRepository(&repository.CoreRepositoryOpts{
