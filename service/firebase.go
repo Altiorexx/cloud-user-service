@@ -68,7 +68,8 @@ func NewFirebaseService(opts *FirebaseServiceOpts, key string) *FirebaseServiceI
 
 // Verifies a token through Firebase, returns the decoded token if valid.
 func (service *FirebaseServiceImpl) VerifyToken(token string) (*auth.Token, error) {
-	decodedToken, err := service.auth.VerifyIDTokenAndCheckRevoked(context.Background(), token)
+	// this doesnt check if token has been revoked, but no use case requires this so far
+	decodedToken, err := service.auth.VerifyIDToken(context.Background(), token)
 	if err != nil {
 		return nil, err
 	}

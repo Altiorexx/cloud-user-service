@@ -21,12 +21,14 @@ type MiddlewareHandlerOpts struct {
 	Core     repository.CoreRepository
 	Role     repository.RoleRepository
 	Firebase service.FirebaseService
+	Token    service.TokenService
 }
 
 type MiddlewareHandlerImpl struct {
 	core          repository.CoreRepository
 	role          repository.RoleRepository
 	firebase      service.FirebaseService
+	token         service.TokenService
 	exemptPaths   []*regexp.Regexp
 	permissionMap map[string]string
 }
@@ -36,6 +38,7 @@ func NewMiddlewareHandler(opts *MiddlewareHandlerOpts) *MiddlewareHandlerImpl {
 		core:     opts.Core,
 		role:     opts.Role,
 		firebase: opts.Firebase,
+		token:    opts.Token,
 		exemptPaths: []*regexp.Regexp{
 			regexp.MustCompile("/api/token/verify"),
 			regexp.MustCompile("^/api/user/([a-zA-Z0-9]+)/exists$"),
@@ -48,24 +51,47 @@ func NewMiddlewareHandler(opts *MiddlewareHandlerOpts) *MiddlewareHandlerImpl {
 			regexp.MustCompile("/api/group/join"),
 		},
 		permissionMap: map[string]string{
-			"POST /api/group/:id/update": "RenameGroup",
+
+			"PATCH /api/group/:id/update":  "RenameGroup",
+			"DELETE /api/group/:id/delete": "DeleteGroup",
+
+			"POST /api/group/member/invite":   "InviteMember",
+			"DELETE /api/group/member/remove": "RemoveMember",
+
+			"": "",
+			/*
+				CREATE_CASE          = "CreateCase"
+				UPDATE_CASE_METADATA = "UpdateCaseMetadata"
+				DELETE_CASE          = "DeleteCase"
+				EXPORT_CASE          = "ExportCase"
+
+				VIEW_LOGS   = "ViewLogs"
+				EXPORT_LOGS = "ExportLogs"
+			*/
 		},
 	}
 }
 
 func (handler *MiddlewareHandlerImpl) RegisterRoutes(router *gin.Engine) {
-	router.Use(handler.VerifyToken)
-	//router.Use(handler.checkPermission)
-	//router.Use(handler.LogUserAction)
-	// should also have a middleware to ensure only requests from recognized services go through.
+	router.Use(handler.isInternalService)
+	router.Use(handler.verifyToken)
+	router.Use(handler.checkPermission)
+	router.Use(handler.logUserAction)
+}
+
+func (handler *MiddlewareHandlerImpl) isInternalService(c *gin.Context) {
+
+	if token := c.GetHeader("X-Internal-Token"); token != "" {
+		if err := handler.token.CheckToken(token); err != nil {
+
+		}
+
+	}
+
 }
 
 // Verifies the token for every incoming request.
-func (handler *MiddlewareHandlerImpl) VerifyToken(c *gin.Context) {
-
-	// when an internal service sends a request, some kind of allowance should maybe
-	// decided? allow origin or some secret key? -> services should not have the same
-	// token verification that users has..
+func (handler *MiddlewareHandlerImpl) verifyToken(c *gin.Context) {
 
 	// don't verify on specified paths
 	for _, path := range handler.exemptPaths {
@@ -128,29 +154,42 @@ func (handler *MiddlewareHandlerImpl) checkPermission(c *gin.Context) {
 		return
 	}
 
+	// set this, so other middleware can differ requests requiring perms
+	c.Set("needsPermission", true)
+
 	// ensure the 'id' path parameter exists in the path
-	groupId, exists := c.Params.Get(":id")
+	groupId, exists := c.Params.Get("id")
 	if !exists {
 		log.Printf("assumed groupId was present, but wasn't.\n")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-
 	memberRoles, err := handler.role.ReadMemberRoles(c.GetString("userId"), groupId)
 	if err != nil {
 		log.Printf("error reading member roles: %+v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
 
-	c.Set("hasPermission", checkPermission(memberRoles, neededPermission))
+	// permission status is set for later use, so the logging handler can
+	// register the request.
+	c.Set("hasPermission", evaluatePermission(memberRoles, neededPermission))
 }
 
 // Logs the request whenever a user has to be verified, for documentation purposes.
-func (handler *MiddlewareHandlerImpl) LogUserAction(c *gin.Context) {
+// This handler is a bit messy, final implementation is yet to be decided.
+func (handler *MiddlewareHandlerImpl) logUserAction(c *gin.Context) {
+
+	// skip requests that doesn't need permission
+	if !c.GetBool("needsPermission") {
+		c.Next()
+		return
+	}
 
 	// should access the permission state, and include it in the log entry
 	hasPermission := c.GetBool("hasPermission")
+
+	log.Printf("has perms: %+v\n", hasPermission)
 
 	// evaluate what to do with the request
 	// go next immediately, because the user should not be affected by this at all (good point?)
@@ -158,7 +197,7 @@ func (handler *MiddlewareHandlerImpl) LogUserAction(c *gin.Context) {
 	case true:
 		c.Next()
 	case false:
-		c.JSON(http.StatusForbidden, gin.H{"error": "missing permission"})
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing permission"})
 	}
 
 	// check that the request is business relevant.
@@ -169,7 +208,7 @@ func (handler *MiddlewareHandlerImpl) LogUserAction(c *gin.Context) {
 }
 
 // checkPermission checks if a user has the necessary permission
-func checkPermission(roles []*types.Role, neededPermission string) bool {
+func evaluatePermission(roles []*types.Role, neededPermission string) bool {
 	for _, role := range roles {
 		switch neededPermission {
 		case types.RENAME_GROUP:

@@ -111,10 +111,10 @@ func (repository *RoleRepositoryImpl) ReadMemberRolesWithTx(tx *sql.Tx, userId s
 
 // Reads a user's roles within a group.
 func (repository *RoleRepositoryImpl) readMemberRoles(exe types.Execer, userId string, groupId string) ([]*types.Role, error) {
-	rows, err := exe.Query("SELECT r.id, r.name, r.groupId, "+
-		"r.renameGroup, r.deleteGroup, r.inviteMember, r.removeMember, "+
-		"r.createCase, r.updateCaseMetadata, r.deleteCase, r.exportCase, "+
-		"r.viewLogs, r.exportLogs "+
+	rows, err := exe.Query("SELECT r.id, r.name, r.organisationId, "+
+		"r.rename_organisation, r.delete_organisation, r.invite_member, r.remove_member, "+
+		"r.create_case, r.update_case_metadata, r.delete_case, r.export_case, "+
+		"r.view_logs, r.export_logs "+
 		"FROM user_role ur "+
 		"INNER JOIN role r ON ur.roleId = r.id "+
 		"INNER JOIN organisation_user ou ON ur.userId = ou.userId "+

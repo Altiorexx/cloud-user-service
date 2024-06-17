@@ -23,6 +23,8 @@ func LoadEnvironmentVariables() {
 		"EMAIL_SERVICE_PASSWORD",
 		"DOMAIN",
 		"PORTAL_DOMAIN",
+		"SERVICE_TOKEN_SECRET",
+		"SERVICE_TOKEN_ISSUER",
 	}
 
 	for _, k := range mandatory {

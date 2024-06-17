@@ -48,9 +48,6 @@ func (h *API_impl) cors() {
 func (h *API_impl) Run() {
 	h.cors()
 	h.registerRoutes()
-	h.router.GET("/:noget", func(c *gin.Context) {
-		c.String(http.StatusOK, "hello world!")
-	})
 	log.Printf("starting api on port %s...", os.Getenv("PORT"))
 	err := http.ListenAndServe(":"+os.Getenv("PORT"), h.router)
 	if err != nil {

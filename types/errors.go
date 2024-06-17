@@ -31,3 +31,8 @@ var (
 var (
 	ErrFirebaseError = errors.New("firebase error")
 )
+
+// token service
+var (
+	ErrInvalidToken = errors.New("invalid token")
+)
