@@ -25,6 +25,7 @@ type API_impl struct {
 }
 
 func NewAPI(opts *API_opts) *API_impl {
+	//gin.SetMode(gin.ReleaseMode) or GIN_MODE=release
 	return &API_impl{
 		router:   gin.Default(),
 		handlers: opts.Handlers,

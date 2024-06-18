@@ -77,7 +77,7 @@ func NewMiddlewareHandler(opts *MiddlewareHandlerOpts) *MiddlewareHandlerImpl {
 			*/
 		},
 	}
-	h.cacheFlushWorker()
+	go h.cacheFlushWorker()
 	return h
 }
 
@@ -90,8 +90,12 @@ func (handler *MiddlewareHandlerImpl) RegisterRoutes(router *gin.Engine) {
 
 // Flushes the handler cache periodically.
 func (handler *MiddlewareHandlerImpl) cacheFlushWorker() {
+	log.Println("middlware cache flush worker started.")
 	ticker := time.NewTicker(time.Minute * 30)
-	defer ticker.Stop()
+	defer func() {
+		ticker.Stop()
+		log.Println("middleware cache flush worker stopped.")
+	}()
 	for {
 		<-ticker.C
 		handler.cache = make(map[string]*types.User)
@@ -261,12 +265,13 @@ func (handler *MiddlewareHandlerImpl) logUserAction(c *gin.Context) {
 		user, err := handler.core.ReadUserById(userId)
 		if err != nil {
 			log.Printf("error reading user by id to get mail for logging: %+v\n", err)
+			// Set a default value in case of error
+			email = "Error reading email"
 		} else {
 			email = user.Email
 		}
-	}
-	if user.Email == "" {
-		email = "Error reading email"
+	} else {
+		email = user.Email
 	}
 
 	// Transform status code to business comprehendable

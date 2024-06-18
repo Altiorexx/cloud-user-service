@@ -106,7 +106,6 @@ func NewCoreRepository(opts *CoreRepositoryOpts, key string) *CoreRepositoryImpl
 		})
 		uri = fmt.Sprintf("%s:%s@cloudsqlconn(localhost:%s)/core?parseTime=true", user, pass, port)
 	}
-	print(uri)
 	db, err := sql.Open("mysql", uri)
 	if err != nil {
 		panic(err)
@@ -119,15 +118,12 @@ func NewCoreRepository(opts *CoreRepositoryOpts, key string) *CoreRepositoryImpl
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(10)
 
-	log.Println("connected to core database.")
-
-	log.Printf("core opts: %+v/n", opts)
-
 	core_repository_instance_map[key] = &CoreRepositoryImpl{
 		client:   db,
 		firebase: opts.Firebase,
 		role:     opts.Role,
 	}
+	log.Println("initialized core repository")
 	return core_repository_instance_map[key]
 }
 

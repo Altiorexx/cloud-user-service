@@ -81,7 +81,6 @@ func NewRoleRepository(opts *RoleRepositoryOpts) *RoleRepositoryImpl {
 		})
 		uri = fmt.Sprintf("%s:%s@cloudsqlconn(localhost:%s)/core?parseTime=true", user, pass, port)
 	}
-	print(uri)
 	db, err := sql.Open("mysql", uri)
 	if err != nil {
 		panic(err)
@@ -93,11 +92,10 @@ func NewRoleRepository(opts *RoleRepositoryOpts) *RoleRepositoryImpl {
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(10)
 
-	log.Println("connected to core database.")
-
 	role_repository_instance_map[opts.Key] = &RoleRepositoryImpl{
 		client: db,
 	}
+	log.Println("initialized role repository")
 	return role_repository_instance_map[opts.Key]
 }
 

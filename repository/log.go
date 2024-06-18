@@ -65,7 +65,6 @@ func NewLogRepository(opts *LogRepositoryOpts) *LogRepositoryImpl {
 		})
 		uri = fmt.Sprintf("%s:%s@cloudsqlconn(localhost:%s)/core?parseTime=true", user, pass, port)
 	}
-	print(uri)
 	db, err := sql.Open("mysql", uri)
 	if err != nil {
 		panic(err)
@@ -77,17 +76,14 @@ func NewLogRepository(opts *LogRepositoryOpts) *LogRepositoryImpl {
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(10)
 
-	log.Println("connected to core database.")
-
 	log_repository_instance_map[opts.Key] = &LogRepositoryImpl{
 		client:    db,
 		entryChan: make(chan *types.LogEntry), // set a buffer on this when going to prod, reduces the log load (but not too high, in case of errors and lost entries)
 	}
-
 	for i := 0; i < 5; i++ {
 		go log_repository_instance_map[opts.Key].write_worker()
 	}
-
+	log.Println("initialized log repository")
 	return log_repository_instance_map[opts.Key]
 }
 
