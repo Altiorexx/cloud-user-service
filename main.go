@@ -90,6 +90,9 @@ func InitApp() *App {
 						Email: service.NewEmailService(),
 					}, "1"),
 				}),
+				api.NewLogHandler(&api.LogHandlerOpts{
+					Log: repository.NewLogRepository(&repository.LogRepositoryOpts{Key: "1"}),
+				}),
 			},
 		}),
 	}

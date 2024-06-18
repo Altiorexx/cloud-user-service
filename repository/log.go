@@ -17,7 +17,7 @@ import (
 
 type LogRepository interface {
 	NewEntry(entry *types.LogEntry)
-	ReadByGroupId(groupId string) (any, error)
+	ReadByGroupId(ctx context.Context, groupId string) (any, error)
 }
 
 type LogRepositoryImpl struct {
@@ -87,11 +87,12 @@ func NewLogRepository(opts *LogRepositoryOpts) *LogRepositoryImpl {
 	return log_repository_instance_map[opts.Key]
 }
 
-// Creates and stores a new log entry.
+// Sends a new log entry to the queue, which is then stored in a database.
 func (repository *LogRepositoryImpl) NewEntry(entry *types.LogEntry) {
 	repository.entryChan <- entry
 }
 
+// Worker responsible for handling entries pushed to the queue.
 func (repository *LogRepositoryImpl) write_worker() {
 	defer log.Println("log write worker stopped!")
 	stmt, err := repository.client.Prepare("INSERT INTO log VALUES (?, ?, ?, ?, ?, ?)")
@@ -107,6 +108,27 @@ func (repository *LogRepositoryImpl) write_worker() {
 }
 
 // Get logs by group id.
-func (repository *LogRepositoryImpl) ReadByGroupId(groupId string) (any, error) {
-	return nil, nil
+func (repository *LogRepositoryImpl) ReadByGroupId(ctx context.Context, groupId string) (any, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stmt, err := repository.client.PrepareContext(ctx, "SELECT action, status, email, timestamp FROM log WHERE organisationId = ?")
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
+	}
+	defer stmt.Close()
+	var log []*types.LogEntry
+	rows, err := stmt.QueryContext(ctx, groupId)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var entry types.LogEntry
+		if err := rows.Scan(&entry.Action, &entry.Status, &entry.Email, &entry.Timestamp); err != nil {
+			return nil, err
+		}
+		log = append(log, &entry)
+	}
+	return log, nil
 }
