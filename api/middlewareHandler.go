@@ -110,7 +110,7 @@ func (handler *MiddlewareHandlerImpl) verifyInternalServiceToken(c *gin.Context)
 			return
 		}
 		// set this to skip other middleware (they are user minded, not service minded)
-		c.Set("skip", true)
+		c.Set("internal-service", true)
 	}
 }
 
@@ -118,7 +118,7 @@ func (handler *MiddlewareHandlerImpl) verifyInternalServiceToken(c *gin.Context)
 func (handler *MiddlewareHandlerImpl) verifyToken(c *gin.Context) {
 
 	// skip if it's a service request
-	if c.GetBool("skip") {
+	if c.GetBool("internal-service") {
 		c.Next()
 		return
 	}
@@ -175,7 +175,7 @@ func (handler *MiddlewareHandlerImpl) verifyToken(c *gin.Context) {
 func (handler *MiddlewareHandlerImpl) checkPermission(c *gin.Context) {
 
 	// skip if it's a service request
-	if c.GetBool("skip") {
+	if c.GetBool("internal-service") {
 		c.Next()
 		return
 	}
