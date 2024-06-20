@@ -93,6 +93,18 @@ func InitApp() *App {
 				api.NewLogHandler(&api.LogHandlerOpts{
 					Log: repository.NewLogRepository(&repository.LogRepositoryOpts{Key: "1"}),
 				}),
+				api.NewInternalHandler(&api.InternalHandlerOpts{
+					Core: repository.NewCoreRepository(&repository.CoreRepositoryOpts{
+						Firebase: service.NewFirebaseService(&service.FirebaseServiceOpts{
+							Email: service.NewEmailService(),
+						}, "1"),
+					}, "1"),
+					Role: repository.NewRoleRepository(&repository.RoleRepositoryOpts{Key: "1"}),
+					Log:  repository.NewLogRepository(&repository.LogRepositoryOpts{Key: "1"}),
+					Firebase: service.NewFirebaseService(&service.FirebaseServiceOpts{
+						Email: service.NewEmailService(),
+					}, "1"),
+				}),
 			},
 		}),
 	}

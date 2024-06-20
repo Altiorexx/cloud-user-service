@@ -209,7 +209,7 @@ func (handler *MiddlewareHandlerImpl) checkPermission(c *gin.Context) {
 
 	// permission status is set for later use, so the logging handler can
 	// register the request.
-	c.Set("hasPermission", evaluatePermission(memberRoles, neededPermission))
+	c.Set("hasPermission", EvaluatePermission(memberRoles, neededPermission))
 }
 
 // Logs the request whenever a user has to be verified, for documentation purposes.
@@ -217,7 +217,7 @@ func (handler *MiddlewareHandlerImpl) checkPermission(c *gin.Context) {
 func (handler *MiddlewareHandlerImpl) logUserAction(c *gin.Context) {
 
 	// skip if it's a service request
-	if c.GetBool("skip") {
+	if c.GetBool("internal-service") {
 		c.Next()
 		return
 	}
@@ -302,7 +302,7 @@ func (handler *MiddlewareHandlerImpl) logUserAction(c *gin.Context) {
 }
 
 // checkPermission checks if a user has the necessary permission
-func evaluatePermission(roles []*types.Role, neededPermission string) bool {
+func EvaluatePermission(roles []*types.Role, neededPermission string) bool {
 	for _, role := range roles {
 		switch neededPermission {
 		case types.RENAME_GROUP:
