@@ -309,7 +309,7 @@ func EvaluatePermission(roles []*types.Role, neededPermission string) bool {
 			if role.RenameGroup {
 				return true
 			}
-		case types.DELETE_CASE:
+		case types.DELETE_GROUP:
 			if role.DeleteGroup {
 				return true
 			}

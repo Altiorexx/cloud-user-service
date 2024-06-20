@@ -52,6 +52,7 @@ func NewInternalHandler(opts *InternalHandlerOpts) InternalHandler {
 
 func (handler *InternalHandlerImpl) RegisterRoutes(router *gin.Engine) {
 	router.POST("/api/internal/check_user", handler.checkUser)
+	router.POST("/api/internal/strict_check_user", handler.strictCheckUser)
 }
 
 // Flushes the handler cache periodically.
@@ -68,14 +69,30 @@ func (handler *InternalHandlerImpl) cacheFlushWorker() {
 	}
 }
 
-// Checks the user is OK with respect to their token (firebase) and the requested action (permission).
 func (handler *InternalHandlerImpl) checkUser(c *gin.Context) {
+	var body struct {
+		Token string `json:"token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+	if _, err := handler.firebase.VerifyToken(body.Token); err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+// Checks the user is OK with respect to their token (firebase) and the requested action (permission).
+func (handler *InternalHandlerImpl) strictCheckUser(c *gin.Context) {
 	var body struct {
 		Token   string `json:"token" binding:"required"`
 		GroupId string `json:"groupId" binding:"required"`
 		Action  string `json:"action" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
+		log.Println(err)
 		c.JSON(http.StatusBadRequest, err.Error())
 		return
 	}
