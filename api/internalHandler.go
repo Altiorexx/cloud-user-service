@@ -116,7 +116,7 @@ func (handler *InternalHandlerImpl) strictCheckUser(c *gin.Context) {
 
 	// check permissions
 	// if no permission is needed for the action, dont do anything..
-	action, exists := handler.permissionMap[c.FullPath()]
+	action, exists := handler.permissionMap[body.Action]
 	if !exists {
 		c.Status(http.StatusOK)
 		return
@@ -127,6 +127,12 @@ func (handler *InternalHandlerImpl) strictCheckUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
+
+	log.Printf("permission needed: %s\n", action)
+	for _, e := range memberRoles {
+		log.Printf("member role: %+v\n", e)
+	}
+
 	if !EvaluatePermission(memberRoles, action) {
 		log.Printf("user doesnt have permission for %s\n", action)
 		c.JSON(http.StatusForbidden, gin.H{"error": "missing permissions"})
