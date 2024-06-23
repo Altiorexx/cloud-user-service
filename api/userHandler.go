@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -29,6 +30,7 @@ type UserHandlerImpl struct {
 	firebase      service.FirebaseService
 	email         service.EmailService
 	portal_domain string
+	domain        string
 }
 
 func NewUserHandler(opts *UserHandlerOpts) *UserHandlerImpl {
@@ -37,6 +39,7 @@ func NewUserHandler(opts *UserHandlerOpts) *UserHandlerImpl {
 		firebase:      opts.Firebase,
 		email:         opts.Email,
 		portal_domain: os.Getenv("PORTAL_DOMAIN"),
+		domain:        os.Getenv("DOMAIN"),
 	}
 }
 
@@ -54,27 +57,29 @@ func (handler *UserHandlerImpl) RegisterRoutes(router *gin.Engine) {
 }
 
 func (handler *UserHandlerImpl) login(c *gin.Context) {
-
 	var body struct {
 		UID      string `json:"uid" binding:"required"`
 		Email    string `json:"email" binding:"required"`
 		Password string `json:"password" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.String(http.StatusBadRequest, err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := types.Validate.Struct(body); err != nil {
-		c.String(http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// check user exists with the things provided
 	if err := handler.core.Login(body.UID, body.Email, body.Password); err != nil {
-		c.String(http.StatusBadRequest, err.Error())
+		log.Printf("error logging in: %+v\n", err)
+		switch {
+		case errors.Is(err, types.ErrUserNotVerified):
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user is not verified"})
+			return
+		case errors.Is(err, types.ErrInvalidPassword):
+			c.JSON(http.StatusNotFound, gin.H{"error": "invalid credentials"})
+			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		}
 		return
 	}
-
 	c.Status(http.StatusOK)
 }
 
@@ -157,23 +162,23 @@ func (handler *UserHandlerImpl) SignupVerify(c *gin.Context) {
 	}
 
 	// redirect to login
-	c.Redirect(http.StatusPermanentRedirect, "http://localhost:3000/login")
+	c.Redirect(http.StatusPermanentRedirect, fmt.Sprintf("%s/login", handler.portal_domain))
 }
 
 // Sign up using email, password.
 func (handler *UserHandlerImpl) signup_EMAIL_PASSWORD(c *gin.Context) {
 	var body struct {
-		UID      string `json:"uid" binding:"required"`
-		Name     string `json:"name" binding:"required"`
-		Email    string `json:"email" binding:"required"`
-		Password string `json:"password" binding:"required"`
+		UID          string  `json:"uid" binding:"required"`
+		Email        string  `json:"email" binding:"required"`
+		Password     string  `json:"password" binding:"required"`
+		InvitationId *string `json:"invitationId"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.String(http.StatusBadRequest, err.Error())
 		return
 	}
 	err := handler.core.WithTransaction(c.Request.Context(), func(tx *sql.Tx) error {
-		if err := handler.core.CreateUserWithTx(tx, body.UID, body.Name, body.Email, ""); err != nil {
+		if err := handler.core.CreateUserWithTx(tx, body.UID, body.Email, body.Password); err != nil {
 			if strings.Contains(err.Error(), "Duplicate entry") {
 				return types.ErrUserAlreadyExists
 			} else {
@@ -191,7 +196,7 @@ func (handler *UserHandlerImpl) signup_EMAIL_PASSWORD(c *gin.Context) {
 	if err != nil {
 		log.Printf("error signing up: %+v\n", err)
 		switch {
-		case strings.Contains(err.Error(), "Duplicate entry"):
+		case errors.Is(err, types.ErrUserAlreadyExists):
 			c.JSON(http.StatusConflict, gin.H{"error": "user already exists"})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -200,18 +205,19 @@ func (handler *UserHandlerImpl) signup_EMAIL_PASSWORD(c *gin.Context) {
 	}
 
 	// send verification email
-	if err := handler.email.Send([]string{body.Email}, handler.email.CreateSignupVerification(body.Email, fmt.Sprintf("http://localhost:4000/api/user/signup/verify?u=%s", body.UID))); err != nil {
-		c.String(http.StatusInternalServerError, err.Error())
-		return
-	}
+	go func() {
+		if err := handler.email.Send([]string{body.Email}, handler.email.CreateSignupVerification(body.Email, fmt.Sprintf("%s/api/user/signup/verify?u=%s", handler.domain, body.UID))); err != nil {
+			log.Printf("error sending verification email to %s\n", body.Email)
+		}
+	}()
 	c.Status(http.StatusCreated)
+
 }
 
 // Signup using a third party provider, Google, Microsoft etc.
 func (handler *UserHandlerImpl) signup_PROVIDER(c *gin.Context) {
 	var body struct {
 		UID   string `json:"uid" binding:"required"`
-		Name  string `json:"name"`
 		Email string `json:"email" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -219,7 +225,7 @@ func (handler *UserHandlerImpl) signup_PROVIDER(c *gin.Context) {
 		return
 	}
 	err := handler.core.WithTransaction(c.Request.Context(), func(tx *sql.Tx) error {
-		if err := handler.core.CreateUserWithTx(tx, body.UID, body.Name, body.Email, ""); err != nil {
+		if err := handler.core.CreateUserWithTx(tx, body.UID, body.Email, "dawoidjawodijawodijawodijawdoaidoawijda120ei12090#01310"); err != nil {
 			if strings.Contains(err.Error(), "Duplicate entry") {
 				return types.ErrUserAlreadyExists
 			} else {
@@ -237,7 +243,7 @@ func (handler *UserHandlerImpl) signup_PROVIDER(c *gin.Context) {
 	if err != nil {
 		log.Printf("error signing up: %+v\n", err)
 		switch {
-		case strings.Contains(err.Error(), "Duplicate entry"):
+		case errors.Is(err, types.ErrUserAlreadyExists):
 			c.JSON(http.StatusConflict, gin.H{"error": "user already exists"})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})

@@ -19,6 +19,8 @@ var (
 	ErrPrepareStatement = errors.New("error preparing statement")
 	ErrNotFound         = errors.New("not found")
 
+	ErrInvalidPassword    = errors.New("invalid password")
+	ErrUserNotVerified    = errors.New("user hasn't verified their account")
 	ErrForbiddenOperation = errors.New("forbidden operation")
 
 	ErrTxCancelled = errors.New("transaction was cancelled")

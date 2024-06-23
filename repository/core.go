@@ -33,8 +33,8 @@ type CoreRepository interface {
 	Signup(userId string, name string) error
 	ReadUserByEmail(email string) (*types.User, error)
 	VerifyUser(userId string) error
-	CreateUser(tx *sql.Tx, userId string, name string) error
-	CreateUserWithTx(tx *sql.Tx, userId string, name string, email string, password string) error
+	CreateUser(tx *sql.Tx, userId string) error
+	CreateUserWithTx(tx *sql.Tx, userId string, email string, password string) error
 	UserExists(uid string) error
 	ReadServices() ([]*types.Service, error)
 	ImplementationGroupCount(serviceName string) (int, error)
@@ -195,7 +195,7 @@ func (repository *CoreRepositoryImpl) ReadUserById(userId string) (*types.User, 
 	defer stmt.Close()
 
 	var user types.User
-	if err := stmt.QueryRow(userId).Scan(&user.Id, &user.Name, &user.Email, &user.Password, &user.LastLogin, &user.Verified); err != nil {
+	if err := stmt.QueryRow(userId).Scan(&user.Id, &user.Email, &user.Password, &user.LastLogin, &user.Verified); err != nil {
 		return nil, fmt.Errorf("error scanning data into variable: %v", err)
 	}
 	return &user, nil
@@ -278,28 +278,27 @@ func (repository *CoreRepositoryImpl) UpdatePassword(uid string, password string
 }
 
 func (repository *CoreRepositoryImpl) Login(uid string, email string, password string) error {
-	stmt, err := repository.client.Prepare("SELECT id, name, email, password, verified FROM user WHERE id = ? AND email = ?")
+	stmt, err := repository.client.Prepare("SELECT id, email, password, verified FROM user WHERE id = ? AND email = ?")
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", types.ErrPrepareStatement, err)
 	}
 	defer stmt.Close()
 	var user struct {
 		Id       string
-		Name     string
 		Email    string
 		Password string
 		Verified bool
 	}
-	if err := stmt.QueryRow(uid, email).Scan(&user.Id, &user.Name, &user.Email, &user.Password, &user.Verified); err != nil {
-		return err
+	if err := stmt.QueryRow(uid, email).Scan(&user.Id, &user.Email, &user.Password, &user.Verified); err != nil {
+		return fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 	}
 	// check verified status
 	if !user.Verified {
-		return fmt.Errorf("user hasn't verified their account")
+		return types.ErrUserNotVerified
 	}
 	// check password hash
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", types.ErrInvalidPassword, err)
 	}
 	return nil
 }
@@ -319,7 +318,7 @@ func (repository *CoreRepositoryImpl) Signup(userId string, name string) error {
 	}()
 
 	// create user
-	if err := repository.CreateUserWithTx(tx, userId, name, "", ""); err != nil {
+	if err := repository.CreateUserWithTx(tx, userId, "", ""); err != nil {
 		return err
 	}
 
@@ -364,16 +363,16 @@ func (repository *CoreRepositoryImpl) VerifyUser(userId string) error {
 }
 
 // Create a user in our system.
-func (repository *CoreRepositoryImpl) CreateUser(tx *sql.Tx, userId string, name string) error {
-	return repository.CreateUserWithTx(nil, userId, name, "", "")
+func (repository *CoreRepositoryImpl) CreateUser(tx *sql.Tx, userId string) error {
+	return repository.CreateUserWithTx(nil, userId, "", "")
 }
 
-func (repository *CoreRepositoryImpl) CreateUserWithTx(tx *sql.Tx, userId string, name string, email string, password string) error {
+func (repository *CoreRepositoryImpl) CreateUserWithTx(tx *sql.Tx, userId string, email string, password string) error {
 	var c types.Execer = repository.client
 	if tx != nil {
 		c = tx
 	}
-	stmt, err := c.Prepare("INSERT INTO user (id, name, email, password, lastLogin, verified) VALUES (?, ?, ?, ?, ?, ?)")
+	stmt, err := c.Prepare("INSERT INTO user (id, email, password, lastLogin, verified) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		return types.ErrPrepareStatement
 	}
@@ -382,7 +381,7 @@ func (repository *CoreRepositoryImpl) CreateUserWithTx(tx *sql.Tx, userId string
 	if err != nil {
 		return err
 	}
-	_, err = stmt.Exec(userId, name, email, hash_password, "", false)
+	_, err = stmt.Exec(userId, email, hash_password, "", false)
 	if err != nil {
 		return err
 	}
@@ -695,7 +694,7 @@ func (repository *CoreRepositoryImpl) InvitationSignup(invitationId string, emai
 	}
 
 	// create user in database
-	if err = repository.CreateUserWithTx(tx, userId, name, "", ""); err != nil {
+	if err = repository.CreateUserWithTx(tx, userId, "", ""); err != nil {
 		return err
 	}
 

@@ -415,7 +415,10 @@ func (handler *GroupHandlerImpl) joinGroup(c *gin.Context) {
 	// redirect to an error page if things went wrong -> the user should not experience an 'error' http blank page thing..
 
 	// indicate to the user that things went well, by redirecting to a success page
-	c.Redirect(http.StatusPermanentRedirect, fmt.Sprintf("%s/invited", handler.portal_domain))
+	c.JSON(http.StatusOK, gin.H{
+		"redirect_url": fmt.Sprintf("%s/invited", handler.portal_domain),
+		"group_url":    fmt.Sprintf("%s/group/%s", handler.portal_domain, groupId),
+	})
 }
 
 func (handler *GroupHandlerImpl) rejectGroup(c *gin.Context) {
