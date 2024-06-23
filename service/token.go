@@ -17,7 +17,7 @@ type TokenService interface {
 type TokenServiceImpl struct {
 	service_token_secret string
 	issuer               string
-	internalList         []string
+	//internalList         []string
 }
 
 type TokenServiceOpts struct{}

@@ -63,7 +63,7 @@ func (service *EmailServiceImpl) CreateSignupVerification(to string, link string
 // Create a reset password link.
 func (service *EmailServiceImpl) CreateResetPassword(to string, link string) string {
 	mailHeader := fmt.Sprintf("From:%s\nTo:%s\nSubject: Reset password link \n\n", service.email, to)
-	mailBody := fmt.Sprintf("Hello, follow this link to reset your password.\n\n%s", link)
+	mailBody := fmt.Sprintf("Hello\nfollow this link to reset your password.\n\n%s", link)
 	return mailHeader + mailBody
 }
 
