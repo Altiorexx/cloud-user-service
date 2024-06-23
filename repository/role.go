@@ -208,7 +208,7 @@ func (repository *RoleRepositoryImpl) GetMembersWithRoles(groupId string) ([]*ty
 }
 
 func (repository *RoleRepositoryImpl) getMembersWithRoles(exe types.Execer, groupId string) ([]*types.MemberRole, error) {
-	query := "SELECT u.id AS user_id, u.name AS user_name, r.id AS role_id, r.name AS role_name " +
+	query := "SELECT u.id AS user_id, u.email AS user_name, r.id AS role_id, r.name AS role_name " +
 		"FROM user u " +
 		"INNER JOIN organisation_user ou ON u.id = ou.userId " +
 		"INNER JOIN user_role ur ON u.id = ur.userId " +

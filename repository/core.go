@@ -516,7 +516,7 @@ func (repository *CoreRepositoryImpl) ReadOrganisationMembers(id string) ([]*typ
 	var members []*types.OrganisationMember
 	for result.Next() {
 		var org types.OrganisationMember
-		if err := result.Scan(&org.Id, &org.Name); err != nil {
+		if err := result.Scan(&org.Id, &org.Email); err != nil {
 			return nil, fmt.Errorf("%w: %v", types.ErrGenericSQL, err)
 		}
 		members = append(members, &org)

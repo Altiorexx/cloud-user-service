@@ -19,8 +19,8 @@ type Organisation struct {
 }
 
 type OrganisationMember struct {
-	Id   string `json:"id"`
-	Name string `json:"name"`
+	Id    string `json:"id"`
+	Email string `json:"email"`
 }
 
 // Interface allowing for dynamic methods differing between client and transaction use.
