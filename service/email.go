@@ -56,7 +56,7 @@ func (service *EmailServiceImpl) CreateSignupAndInvitationMail(to string, group 
 // Create signup verification email.
 func (service *EmailServiceImpl) CreateSignupVerification(to string, link string) string {
 	mailHeader := fmt.Sprintf("From:%s\nTo:%s\nSubject: Verification Link\n\n", service.email, to)
-	mailBody := fmt.Sprintf("Hej john john x, tryk her din klovn: %s", link)
+	mailBody := fmt.Sprintf("Hello\nClick here to verify your account: %s", link)
 	return mailHeader + mailBody
 }
 
